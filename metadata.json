@@ -1,0 +1,8 @@
+{
+  "name": "NukeMap 3D Edu",
+  "description": "Educational tool reflecting historical nuclear scaling laws using 3D visualization.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

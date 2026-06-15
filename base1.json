@@ -1,0 +1,1126 @@
+{
+  "project": {
+    "name": "NukeMap 3D (Edu)",
+    "objective": "Visualiser l'impact potentiel d'explosions nucléaires historiques ou théoriques et simuler les échelles de destruction via des outils d'information cartographiques et balistiques publics afin d'éduquer et de sensibiliser.",
+    "target_users": [
+      "Professeurs d'histoire",
+      "Chercheurs en géopolitique",
+      "Étudiants",
+      "Grand public curieux de physique"
+    ],
+    "main_features": [
+      "Simulation sur carte avec rayons évalués selon des modèles mathématiques reconnus",
+      "Sélection d'arsenal",
+      "Simulation d'airburst et surface burst (futur)"
+    ]
+  },
+  "selection_criteria": "Villes historiquement liées au nucléaire, villes côtières stratégiques majeures, et cibles représentatives couvrant différentes géographies.",
+  "cities": [
+    {
+      "id": 1,
+      "name": "Hiroshima",
+      "country": "Japon",
+      "coordinates": {
+        "latitude": 34.39,
+        "longitude": 132.45
+      },
+      "educational_justification": "Cible historique (1945) — côtière, delta fluvial",
+      "historical_context": {
+        "weapon": "Little Boy",
+        "yield_kt": 15,
+        "date": "1945-08-06",
+        "burst_type": "airburst",
+        "burst_altitude_m": 580
+      },
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "value": 200,
+          "note": "Mer Intérieure de Seto, pas de fosse abyssale directe, max ~250 m dans le chenal de Bungo",
+          "source": "GEBCO 2023 Grid"
+        },
+        "coastal_depth_hc_m": {
+          "min": 5,
+          "max": 10,
+          "note": "delta de l'Ōta, zone portuaire draguée à 10–12 m",
+          "source": "Cartes marines Japan Hydrographic Association (JHOD), cartes ENC JP"
+        },
+        "distance_to_shore_d_km": {
+          "value": 60,
+          "note": "jusqu'au détroit de Bungo (Pacifique ouvert) ; ~15 km à travers la Mer Intérieure depuis les îles-barrières",
+          "source": "GEBCO / mesure géodésique"
+        },
+        "specific_note": "Hiroshima est protégée par la Mer Intérieure de Seto (Seto Naikai). Un tsunami généré dans le Pacifique serait très atténué par les détroits étroits (Bungo, Kii). Un tsunami local généré dans la Mer Intérieure aurait un fetch et une profondeur limités — hauteur de vague modeste."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "min": 0.5,
+          "max": 1.0,
+          "note": "delta très plat, plaine alluviale",
+          "source": "SRTM 30 m / GSI Japan DEM 5 m"
+        },
+        "average_altitude_m_asl": {
+          "min": 2,
+          "max": 15,
+          "note": "hypocentre à ~6 m ASL ; collines périphériques 50–200 m",
+          "source": "GSI Japan Elevation Tile"
+        },
+        "manning_coefficient_n": {
+          "min": 0.040,
+          "max": 0.045,
+          "note": "zone urbaine dense pré-1945 : bois, tuiles ; 0.030 post-destruction (décombres plats)",
+          "source": "Littérature ASCE — valeurs standard pour tissu urbain japonais traditionnel"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds_summer": {
+          "direction": "SSW à SW",
+          "speed_kmh": {"min": 10, "max": 15},
+          "note": "mousson d'été",
+          "source": "JMA Climatological Normals 1991–2020"
+        },
+        "dominant_winds_winter": {
+          "direction": "NW à N",
+          "speed_kmh": {"min": 15, "max": 25},
+          "source": "JMA"
+        },
+        "tropopause_altitude_km": {
+          "summer": {"min": 16.0, "max": 16.5, "note": "latitude ~34°N tropicale-tempérée"},
+          "winter": {"min": 11, "max": 12},
+          "source": "Radiosondages JMA Shionomisaki / données ERA5 ECMWF"
+        }
+      }
+    },
+    {
+      "id": 2,
+      "name": "Nagasaki",
+      "country": "Japon",
+      "coordinates": {
+        "latitude": 32.77,
+        "longitude": 129.87
+      },
+      "educational_justification": "Cible historique (1945) — baie encaissée",
+      "historical_context": {
+        "weapon": "Fat Man",
+        "yield_kt": 21,
+        "date": "1945-08-09",
+        "burst_type": "airburst",
+        "burst_altitude_m": 503
+      },
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 150,
+          "max": 200,
+          "note": "plateau continental de la Mer de Chine orientale ; fosse d'Okinawa à ~2 200 m à ~600 km au SW",
+          "source": "GEBCO 2023"
+        },
+        "coastal_depth_hc_m": {
+          "min": 10,
+          "max": 15,
+          "note": "port de Nagasaki, chenal dragué à 13 m",
+          "source": "JHOD cartes marines"
+        },
+        "distance_to_shore_d_km": {
+          "value": 200,
+          "note": "jusqu'au rebord du plateau continental ; ~0.5 km du fond de la baie au rivage urbain",
+          "source": "GEBCO"
+        },
+        "specific_note": "La baie de Nagasaki est un fjord étroit (~1 km de large, ~4 km de long), orienté SW. Effet d'entonnoir potentiel amplifiant un tsunami entrant."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "min": 3,
+          "max": 8,
+          "note": "baie encaissée entre collines escarpées",
+          "source": "GSI Japan DEM 5 m"
+        },
+        "average_altitude_m_asl": {
+          "port": {"min": 2, "max": 5},
+          "urakami_valley_hypocenter": {"min": 30, "max": 50},
+          "ridges": {"min": 200, "max": 400},
+          "source": "GSI"
+        },
+        "manning_coefficient_n": {
+          "value": 0.040,
+          "note": "zone portuaire mixte bois/béton 1945",
+          "source": "ASCE standards"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds_summer": {
+          "direction": "S à SSW",
+          "speed_kmh": {"min": 8, "max": 12},
+          "source": "JMA Nagasaki Station"
+        },
+        "dominant_winds_winter": {
+          "direction": "NNW à N",
+          "speed_kmh": {"min": 15, "max": 20},
+          "source": "JMA"
+        },
+        "tropopause_altitude_km": {
+          "summer": 16.5,
+          "winter": 11.5,
+          "source": "ERA5 / JMA sondages Kagoshima"
+        }
+      }
+    },
+    {
+      "id": 3,
+      "name": "Atoll de Bikini",
+      "country": "Îles Marshall",
+      "coordinates": {
+        "latitude": 11.60,
+        "longitude": 165.38
+      },
+      "educational_justification": "Site d'essais (Castle Bravo, 1954) — atoll pacifique",
+      "historical_context": {
+        "test_name": "Castle Bravo",
+        "yield_mt": 15,
+        "date": "1954-03-01",
+        "note": "Plus grand essai US"
+      },
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 4000,
+          "max": 5000,
+          "note": "bassin océanique Pacifique central ; l'atoll est un guyot corallien entouré de grands fonds",
+          "source": "GEBCO 2023"
+        },
+        "coastal_depth_hc_m": {
+          "lagoon": {"min": 30, "max": 55},
+          "reefs": {"min": 1, "max": 3},
+          "source": "NOAA Bathymetric Data Viewer / US Navy hydrographic surveys 1946–1958"
+        },
+        "distance_to_shore_d_km": {
+          "min": 2,
+          "max": 5,
+          "note": "pente abrupte du guyot, du fond océanique au récif ; les atolls ont des talus quasi-verticaux",
+          "source": "GEBCO"
+        },
+        "specific_note": "Castle Bravo a été détonée sur un récif. Le tsunami résultant a été mesuré à ~30 m localement sur l'atoll. La topographie sous-marine est celle d'un cône volcanique abrupt."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "beach": {"min": 1, "max": 2, "note": "plage corallienne plate"},
+          "outer_reef_slope": {"value": ">45°"},
+          "source": "Imagerie satellite / USGS topographic surveys"
+        },
+        "average_altitude_m_asl": {
+          "min": 2,
+          "max": 3,
+          "note": "motus coralliens — extrêmement vulnérable",
+          "source": "SRTM / données terrain US AEC"
+        },
+        "manning_coefficient_n": {
+          "submerged_coral_reef": 0.025,
+          "sandy_lagoon": 0.012,
+          "source": "Littérature hydraulique côtière (Bricker et al., 2015)"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds_year_round": {
+          "direction": "ENE (alizés)",
+          "speed_kmh": {"min": 15, "max": 25},
+          "source": "NOAA / ERA5 climatologie"
+        },
+        "tropopause_altitude_km": {
+          "min": 17.0,
+          "max": 17.5,
+          "note": "latitude tropicale ~12°N, faible variation saisonnière",
+          "source": "ERA5 ECMWF"
+        },
+        "historical_castle_bravo_note": "Le fallout réel a dérivé vers l'Est puis le SE, contaminant Rongelap et Utirik à cause d'un vent inattendu en altitude (cisaillement). Le modèle devrait permettre des profils de vent multicouches."
+      }
+    },
+    {
+      "id": 4,
+      "name": "New York",
+      "country": "USA",
+      "coordinates": {
+        "latitude": 40.71,
+        "longitude": -74.01
+      },
+      "educational_justification": "Scénario théorique classique — mégapole côtière",
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 2500,
+          "max": 4000,
+          "note": "plaine abyssale atlantique ; rebord du plateau continental à ~100–200 m de profondeur",
+          "source": "GEBCO 2023 / NOAA ETOPO"
+        },
+        "coastal_depth_hc_m": {
+          "upper_new_york_bay": {"min": 6, "max": 12},
+          "ambrose_channel": {"min": 10, "max": 15},
+          "east_harlem_rivers": {"min": 3, "max": 5},
+          "source": "NOAA ENC US5NY1CM"
+        },
+        "distance_to_shore_d_km": {
+          "value": 180,
+          "note": "du rebord du plateau continental à Battery Park",
+          "source": "NOAA"
+        },
+        "specific_note": "Le Hudson Canyon (canyon sous-marin) s'étend à ~150 km au large et pourrait canaliser l'énergie d'un tsunami."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "min": 1,
+          "max": 2,
+          "note": "plages de Long Island, Staten Island ; quais verticaux à Manhattan",
+          "source": "USGS 3DEP / NYC Open Data LiDAR"
+        },
+        "average_altitude_m_asl": {
+          "manhattan_south_financial": {"min": 3, "max": 10},
+          "midtown": {"min": 10, "max": 20},
+          "washington_heights": 80,
+          "source": "NYC DEM 1 ft resolution"
+        },
+        "manning_coefficient_n": {
+          "manhattan_skyscrapers": {"min": 0.060, "max": 0.080, "note": "canyon urbain extrême"},
+          "brooklyn_queens_residential": 0.035,
+          "concrete_quays": 0.015,
+          "source": "Kaiser et al. (2011) ASCE Tsunami loads"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds_annual": {
+          "direction": "NW à W",
+          "speed_kmh": {"min": 15, "max": 20},
+          "source": "NWS / NOAA NCEI"
+        },
+        "dominant_winds_summer": {
+          "direction": "SSW",
+          "speed_kmh": {"min": 12, "max": 18},
+          "note": "brise marine",
+          "source": "NWS"
+        },
+        "tropopause_altitude_km": {
+          "summer": {"min": 12, "max": 13},
+          "winter": {"min": 9, "max": 10},
+          "source": "Radiosondages NWS Upton (OKX)"
+        }
+      }
+    },
+    {
+      "id": 5,
+      "name": "San Francisco",
+      "country": "USA",
+      "coordinates": {
+        "latitude": 37.77,
+        "longitude": -122.42
+      },
+      "educational_justification": "Baie, géologie complexe",
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 3500,
+          "max": 4000,
+          "note": "bassin Pacifique Est ; plateau continental étroit, rebord à ~50 km",
+          "source": "GEBCO / NOAA ETOPO"
+        },
+        "coastal_depth_hc_m": {
+          "golden_gate": {"min": 12, "max": 15},
+          "inner_bay": {"min": 3, "max": 8, "note": "peu profonde en moyenne ~4.5 m"},
+          "source": "NOAA ENC / USGS SF Bay bathymetry"
+        },
+        "distance_to_shore_d_km": {
+          "value": 50,
+          "note": "plateau continental étroit — Pacifique Est actif",
+          "source": "GEBCO"
+        },
+        "specific_note": "Le Golden Gate agit comme un goulot (1.6 km de large) — amplification potentielle d'un tsunami entrant dans la baie, mais aussi limitation du volume d'eau entrant."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "cliffs_ocean_beach_lands_end": {"min": 5, "max": 15},
+          "bay_mudflats": {"min": 1, "max": 2},
+          "source": "USGS 3DEP"
+        },
+        "average_altitude_m_asl": {
+          "embarcadero_soma": {"min": 2, "max": 5},
+          "twin_peaks": 280,
+          "nob_hill": 100,
+          "source": "USGS DEM"
+        },
+        "manning_coefficient_n": {
+          "downtown_dense": {"min": 0.045, "max": 0.055},
+          "residential_hills": 0.035,
+          "source": "ASCE standards"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds": {
+          "direction": "WNW",
+          "speed_kmh": {"min": 15, "max": 30},
+          "note": "été, effet Venturi par Golden Gate ; variable en hiver",
+          "source": "NWS Bay Area"
+        },
+        "tropopause_altitude_km": {
+          "summer": 12.5,
+          "winter": 10,
+          "source": "Radiosondages NWS Oakland (OAK)"
+        }
+      }
+    },
+    {
+      "id": 6,
+      "name": "Pearl Harbor / Honolulu",
+      "country": "USA (Hawaï)",
+      "coordinates": {
+        "latitude": 21.35,
+        "longitude": -157.95
+      },
+      "educational_justification": "Contexte historique WWII — île volcanique",
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 4500,
+          "max": 5500,
+          "note": "plancher Pacifique central",
+          "source": "GEBCO"
+        },
+        "coastal_depth_hc_m": {
+          "pearl_harbor_entrance": {"min": 10, "max": 15},
+          "inner_harbor": {"min": 5, "max": 10},
+          "waikiki_reef": {"min": 3, "max": 8},
+          "source": "NOAA ENC"
+        },
+        "distance_to_shore_d_km": {
+          "min": 5,
+          "max": 10,
+          "note": "pente volcanique abrupte d'Oahu — île volcanique sans vrai plateau continental",
+          "source": "GEBCO"
+        },
+        "specific_note": "Les îles hawaïennes ont des pentes sous-marines extrêmement abruptes. Un tsunami arrive presque sans atténuation sur le plateau, ce qui explique la vulnérabilité historique (1946, 1960)."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "waikiki_beaches": {"min": 2, "max": 5},
+          "north_shore_cliffs": {"min": 10, "max": 20},
+          "source": "USGS 3DEP Hawaii"
+        },
+        "average_altitude_m_asl": {
+          "honolulu_waikiki": {"min": 3, "max": 10},
+          "pearl_harbor": {"min": 0, "max": 5},
+          "diamond_head": 232,
+          "punchbowl": 150,
+          "source": "USGS DEM"
+        },
+        "manning_coefficient_n": {
+          "honolulu_urban": {"min": 0.035, "max": 0.045},
+          "beaches_parking": 0.020,
+          "source": "ASCE"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds": {
+          "direction": "ENE (alizés)",
+          "speed_kmh": {"min": 15, "max": 25},
+          "note": "quasi-permanents",
+          "source": "NWS Honolulu"
+        },
+        "tropopause_altitude_km": {
+          "min": 16.5,
+          "max": 17.0,
+          "note": "latitude tropicale, peu de variation",
+          "source": "Radiosondages NWS Lihue (HNL)"
+        }
+      }
+    },
+    {
+      "id": 7,
+      "name": "Mourmansk",
+      "country": "Russie",
+      "coordinates": {
+        "latitude": 68.97,
+        "longitude": 33.08
+      },
+      "educational_justification": "Base navale nucléaire — arctique, fjord",
+      "historical_context": {
+        "note": "Base de la Flotte du Nord — Severomorsk à proximité. Tsar Bomba testée à Novaya Zemlya, 50 Mt."
+      },
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 300,
+          "max": 400,
+          "note": "Mer de Barents, plateau continental peu profond ; fosse norvégienne à ~2 500 m plus au nord",
+          "source": "GEBCO 2023"
+        },
+        "coastal_depth_hc_m": {
+          "min": 15,
+          "max": 30,
+          "note": "fjord de Kola — chenal profond et étroit",
+          "source": "Russian Admiralty Charts / GEBCO détaillé"
+        },
+        "distance_to_shore_d_km": {
+          "value": 100,
+          "note": "de l'entrée du fjord de Kola à la Mer de Barents ouverte ; ~50 km de Mourmansk à l'embouchure",
+          "source": "GEBCO"
+        },
+        "specific_note": "Le fjord de Kola fait ~55 km de long et 2–3 km de large — effet d'entonnoir majeur mais aussi atténuation par frottement sur les parois."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "min": 10,
+          "max": 25,
+          "note": "fjord aux parois abruptes, roche cristalline",
+          "source": "Arctic DEM 2 m (Polar Geospatial Center)"
+        },
+        "average_altitude_m_asl": {
+          "port": {"min": 5, "max": 20},
+          "city": {"min": 50, "max": 150},
+          "surrounding_hills": {"min": 300, "max": 500},
+          "source": "Arctic DEM"
+        },
+        "manning_coefficient_n": {
+          "industrial_port_area": 0.035,
+          "bare_rock_tundra": 0.025,
+          "source": "Estimations standard"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds_winter": {
+          "direction": "S à SW",
+          "speed_kmh": {"min": 20, "max": 35},
+          "note": "catabatiques depuis le plateau de Kola",
+          "source": "ERA5 / données météo russes (Roshydromet)"
+        },
+        "dominant_winds_summer": {
+          "direction": "N à NE",
+          "speed_kmh": {"min": 10, "max": 20},
+          "source": "ERA5"
+        },
+        "tropopause_altitude_km": {
+          "summer": {"min": 8, "max": 9},
+          "winter": {"min": 7, "max": 8},
+          "note": "latitude arctique = tropopause très basse ; à 68°N, le champignon d'une bombe puissante percera la tropopause beaucoup plus facilement",
+          "source": "ERA5"
+        }
+      }
+    },
+    {
+      "id": 8,
+      "name": "Sébastopol",
+      "country": "Crimée",
+      "coordinates": {
+        "latitude": 44.62,
+        "longitude": 33.52
+      },
+      "educational_justification": "Base navale stratégique — Mer Noire",
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 2000,
+          "max": 2200,
+          "note": "bassin central de la Mer Noire",
+          "source": "GEBCO"
+        },
+        "coastal_depth_hc_m": {
+          "min": 10,
+          "max": 18,
+          "note": "rade de Sébastopol, chenal dragué",
+          "source": "Cartes marines historiques (Admiralty Charts)"
+        },
+        "distance_to_shore_d_km": {
+          "value": 150,
+          "note": "jusqu'au bassin central ; plateau continental sud-criméen étroit (~10–15 km)",
+          "source": "GEBCO"
+        }
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "cliffs_calanques": {"min": 5, "max": 15},
+          "inner_harbor": 2,
+          "source": "SRTM 30 m"
+        },
+        "average_altitude_m_asl": {
+          "inner_port": {"min": 2, "max": 10},
+          "upper_town": {"min": 30, "max": 80},
+          "sapun_gora": 240,
+          "source": "SRTM"
+        },
+        "manning_coefficient_n": {
+          "value": 0.040,
+          "note": "zone portuaire dense, infrastructures navales massives",
+          "source": "Estimation"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds_winter": {
+          "direction": "NNE",
+          "speed_kmh": {"min": 15, "max": 25},
+          "source": "ERA5 climatologie"
+        },
+        "dominant_winds_summer": {
+          "direction": "SW",
+          "speed_kmh": {"min": 10, "max": 15},
+          "note": "brise marine",
+          "source": "ERA5 climatologie"
+        },
+        "tropopause_altitude_km": {
+          "summer": 12,
+          "winter": 10,
+          "source": "ERA5"
+        }
+      }
+    },
+    {
+      "id": 9,
+      "name": "Haïfa",
+      "country": "Israël",
+      "coordinates": {
+        "latitude": 32.80,
+        "longitude": 34.98
+      },
+      "educational_justification": "Méditerranée orientale — port stratégique",
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 1500,
+          "max": 2500,
+          "note": "bassin Levantin, Méditerranée orientale",
+          "source": "GEBCO / EMODnet Bathymetry"
+        },
+        "coastal_depth_hc_m": {
+          "haifa_port_dredged": {"min": 10, "max": 14},
+          "haifa_bay_natural": {"min": 3, "max": 5},
+          "source": "Israel Hydrographic Service"
+        },
+        "distance_to_shore_d_km": {
+          "min": 25,
+          "max": 40,
+          "note": "plateau continental levantin, relativement étroit",
+          "source": "GEBCO"
+        },
+        "specific_note": "Le Mont Carmel (546 m) surplombe directement le port — protection naturelle pour la ville haute mais la zone portuaire et la plaine côtière (Krayot) sont très exposées."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "haifa_bay_sand": {"min": 1, "max": 3},
+          "carmel_cliffs": {"value": ">30"},
+          "source": "Israel Mapping Center"
+        },
+        "average_altitude_m_asl": {
+          "port": {"min": 0, "max": 5},
+          "hadar": 100,
+          "carmel_center": 300,
+          "carmel_summit": 546,
+          "source": "Israel DEM 5 m"
+        },
+        "manning_coefficient_n": {
+          "industrial_port_refineries": 0.045,
+          "residential": 0.030,
+          "source": "Estimation"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds_summer": {
+          "direction": "WNW (brise de mer)",
+          "speed_kmh": {"min": 15, "max": 20},
+          "note": "après-midi ; E la nuit",
+          "source": "IMS (Israel Meteorological Service)"
+        },
+        "dominant_winds_winter": {
+          "direction": "W à SW",
+          "speed_kmh": {"min": 20, "max": 30},
+          "note": "tempêtes méditerranéennes",
+          "source": "IMS"
+        },
+        "tropopause_altitude_km": {
+          "summer": 16,
+          "winter": 11,
+          "source": "ERA5"
+        }
+      }
+    },
+    {
+      "id": 10,
+      "name": "Shanghai",
+      "country": "Chine",
+      "coordinates": {
+        "latitude": 31.23,
+        "longitude": 121.47
+      },
+      "educational_justification": "Mégapole côtière — estuaire plat",
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 50,
+          "max": 100,
+          "note": "Mer de Chine orientale — plateau continental extrêmement vaste et peu profond ; fosse d'Okinawa à ~2 700 m à ~700 km à l'est",
+          "source": "GEBCO"
+        },
+        "coastal_depth_hc_m": {
+          "yangtze_channel_dredged": {"min": 8, "max": 12},
+          "natural_mouth": {"min": 3, "max": 5, "note": "barres sableuses"},
+          "source": "China Maritime Safety Administration"
+        },
+        "distance_to_shore_d_km": {
+          "min": 600,
+          "max": 700,
+          "note": "jusqu'à la fosse d'Okinawa ; plateau continental parmi les plus larges au monde",
+          "source": "GEBCO"
+        },
+        "specific_note": "Le plateau continental immense et peu profond atténue considérablement les tsunamis transocéaniques. Cependant, la très faible altitude de Shanghai rend la ville extrêmement vulnérable même à une modeste montée des eaux."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "min": 0.01,
+          "max": 0.1,
+          "note": "delta du Yangtze — parmi les plus plats au monde",
+          "source": "SRTM / données chinoises"
+        },
+        "average_altitude_m_asl": {
+          "urban_area": {"min": 2, "max": 4, "note": "moyenne pour l'ensemble de la zone urbaine"},
+          "sheshan": 100,
+          "source": "SRTM 30 m"
+        },
+        "manning_coefficient_n": {
+          "pudong_skyscrapers": {"min": 0.050, "max": 0.065},
+          "peri_urban": 0.030,
+          "source": "Estimation"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds_summer": {
+          "direction": "SE (mousson)",
+          "speed_kmh": {"min": 10, "max": 15},
+          "note": "typhons possibles (W/NW, >100 km/h)",
+          "source": "CMA (China Meteorological Administration)"
+        },
+        "dominant_winds_winter": {
+          "direction": "NW (mousson hivernale sibérienne)",
+          "speed_kmh": {"min": 15, "max": 25},
+          "source": "CMA"
+        },
+        "tropopause_altitude_km": {
+          "summer": 16,
+          "winter": 11,
+          "source": "ERA5"
+        }
+      }
+    },
+    {
+      "id": 11,
+      "name": "Mumbai",
+      "country": "Inde",
+      "coordinates": {
+        "latitude": 19.08,
+        "longitude": 72.88
+      },
+      "educational_justification": "Mégapole côtière — océan Indien",
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 2500,
+          "max": 3500,
+          "note": "Mer d'Arabie / Océan Indien occidental",
+          "source": "GEBCO"
+        },
+        "coastal_depth_hc_m": {
+          "mumbai_harbour_dredged": {"min": 8, "max": 12},
+          "natural_mudflats": {"min": 2, "max": 5},
+          "source": "Indian Naval Hydrographic Office"
+        },
+        "distance_to_shore_d_km": {
+          "min": 200,
+          "max": 300,
+          "note": "plateau continental ouest-indien, relativement large",
+          "source": "GEBCO"
+        }
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "min": 0.5,
+          "max": 2,
+          "note": "plat, terres récupérées sur la mer, mangroves",
+          "source": "SRTM / CartoDEM India"
+        },
+        "average_altitude_m_asl": {
+          "south_mumbai": {"min": 0, "max": 10, "note": "majeure partie, terres artificielles"},
+          "sanjay_gandhi_np": 450,
+          "source": "CartoDEM"
+        },
+        "manning_coefficient_n": {
+          "slums_dharavi": {"min": 0.060, "max": 0.080, "note": "rugosité hydraulique maximale"},
+          "colonial_districts": 0.040,
+          "marine_drive_concrete": 0.015,
+          "note": "Mumbai présente probablement la plus grande variabilité de Manning de toutes les villes de la liste",
+          "source": "Estimation"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds_monsoon": {
+          "period": "juin–sept",
+          "direction": "W à SW",
+          "speed_kmh": {"min": 20, "max": 40},
+          "source": "IMD (India Meteorological Department)"
+        },
+        "dominant_winds_dry_winter": {
+          "direction": "NE à N",
+          "speed_kmh": {"min": 8, "max": 12},
+          "source": "IMD"
+        },
+        "tropopause_altitude_km": {
+          "min": 16.5,
+          "max": 17.0,
+          "note": "quasi-tropicale toute l'année",
+          "source": "ERA5 / IMD radiosondages"
+        }
+      }
+    },
+    {
+      "id": 12,
+      "name": "Cherbourg",
+      "country": "France",
+      "coordinates": {
+        "latitude": 49.64,
+        "longitude": -1.62
+      },
+      "educational_justification": "Arsenal naval, base SNLE à proximité (Île Longue)",
+      "historical_context": {
+        "note": "Proximité de l'Île Longue (base SNLE française) et de La Hague (retraitement nucléaire)."
+      },
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 100,
+          "max": 170,
+          "note": "Manche — mer épicontinentale peu profonde ; Atlantique Nord à ~4 000 m au-delà du plateau continental",
+          "source": "GEBCO / SHOM (Service Hydrographique et Océanographique de la Marine)"
+        },
+        "coastal_depth_hc_m": {
+          "grande_rade": {"min": 10, "max": 14, "note": "protégée par la plus grande digue artificielle du monde — 3.7 km"},
+          "petite_rade_port": {"min": 6, "max": 8},
+          "source": "SHOM cartes marines"
+        },
+        "distance_to_shore_d_km": {
+          "value": 200,
+          "note": "jusqu'au rebord du plateau continental (marge celtique)",
+          "source": "SHOM / GEBCO"
+        },
+        "specific_note": "La digue de Cherbourg (construite 1783–1853) agirait comme un brise-lames massif. Cependant, une onde nucléaire pourrait la submerger ou la détruire."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "min": 3,
+          "max": 8,
+          "note": "côte rocheuse du Cotentin, bocage",
+          "source": "IGN RGE Alti 1 m"
+        },
+        "average_altitude_m_asl": {
+          "port": {"min": 2, "max": 5},
+          "city": {"min": 10, "max": 30},
+          "montagne_du_roule": 112,
+          "source": "IGN BD Alti"
+        },
+        "manning_coefficient_n": {
+          "port_arsenal": 0.035,
+          "historic_center": 0.040,
+          "source": "Estimation"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds": {
+          "direction": "WSW à W",
+          "speed_kmh": {"min": 20, "max": 35},
+          "note": "influence océanique forte, très venté",
+          "source": "Météo-France climatologie"
+        },
+        "tropopause_altitude_km": {
+          "summer": {"min": 11, "max": 12},
+          "winter": {"min": 9, "max": 10},
+          "source": "Radiosondages Météo-France Brest/Trappes / ERA5"
+        }
+      }
+    },
+    {
+      "id": 13,
+      "name": "Londres",
+      "country": "Royaume-Uni",
+      "coordinates": {
+        "latitude": 51.51,
+        "longitude": -0.13
+      },
+      "educational_justification": "Capitale historique — estuaire peu profond (estuaire Tamise)",
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "north_sea": {"min": 30, "max": 50},
+          "english_channel": {"min": 100, "max": 170},
+          "source": "GEBCO / UKHO (UK Hydrographic Office)"
+        },
+        "coastal_depth_hc_m": {
+          "thames_estuary_downstream_tilbury": {"min": 5, "max": 10},
+          "thames_london_dredged": {"min": 2, "max": 5},
+          "source": "UKHO Admiralty Charts"
+        },
+        "distance_to_shore_d_km": {
+          "value": 80,
+          "note": "de l'embouchure de la Tamise à la Mer du Nord ouverte ; ~60 km de la Mer du Nord au rebord du plateau continental (peu pertinent car mer très peu profonde)",
+          "source": "UKHO"
+        },
+        "specific_note": "L'estuaire de la Tamise est en entonnoir (60 km de large à l'embouchure, 250 m à Tower Bridge) — amplification naturelle considérable. La Thames Barrier (inaugurée 1984) protège Londres des ondes de tempête mais ne résisterait pas à un tsunami nucléaire majeur."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "min": 0.1,
+          "max": 0.5,
+          "note": "marais et estrans plats de l'Essex et du Kent",
+          "source": "UK Environment Agency LiDAR 1 m"
+        },
+        "average_altitude_m_asl": {
+          "central_london_westminster_city": {"min": 2, "max": 15},
+          "canary_wharf": {"min": 1, "max": 5},
+          "greenwich": {"min": 2, "max": 4},
+          "hampstead_heath": 134,
+          "source": "EA LiDAR / OS Terrain 5"
+        },
+        "manning_coefficient_n": {
+          "city_of_london_dense_historic": {"min": 0.050, "max": 0.060},
+          "docklands_modern": 0.040,
+          "parks_open_areas": 0.035,
+          "source": "Estimation"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds": {
+          "direction": "SW à W",
+          "speed_kmh": {"min": 15, "max": 25},
+          "note": "toute l'année, influence atlantique",
+          "source": "Met Office climatologie"
+        },
+        "tropopause_altitude_km": {
+          "summer": {"min": 11, "max": 12},
+          "winter": {"min": 8, "max": 9},
+          "source": "Radiosondages Met Office Larkhill / ERA5"
+        }
+      }
+    },
+    {
+      "id": 14,
+      "name": "Sydney",
+      "country": "Australie",
+      "coordinates": {
+        "latitude": -33.87,
+        "longitude": 151.21
+      },
+      "educational_justification": "Hémisphère sud — baie emblématique",
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 4000,
+          "max": 4500,
+          "note": "bassin de Tasman",
+          "source": "GEBCO"
+        },
+        "coastal_depth_hc_m": {
+          "harbour_entrance_port_jackson": {"min": 10, "max": 15},
+          "inner_bay_circular_quay": {"min": 5, "max": 10},
+          "source": "Australian Hydrographic Office"
+        },
+        "distance_to_shore_d_km": {
+          "min": 25,
+          "max": 30,
+          "note": "plateau continental assez étroit au large de Sydney",
+          "source": "GEBCO"
+        },
+        "specific_note": "L'entrée de Sydney Harbour (The Heads) fait seulement ~1.5 km de large — goulot naturel limitant le volume d'eau mais potentiellement amplificateur en hauteur."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "sandstone_cliffs_north_south_head": {"min": 5, "max": 15},
+          "beaches_bondi_manly": {"min": 2, "max": 3},
+          "source": "Geoscience Australia DEM 5 m"
+        },
+        "average_altitude_m_asl": {
+          "circular_quay_cbd": {"min": 3, "max": 15},
+          "eastern_suburbs": {"min": 50, "max": 100},
+          "blue_mountains_50km_w": 1000,
+          "source": "GA DEM"
+        },
+        "manning_coefficient_n": {
+          "cbd_moderate_density": 0.045,
+          "residential_suburbs": 0.030,
+          "source": "Estimation"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds_summer_djf": {
+          "direction": "NE à E (brise marine)",
+          "speed_kmh": {"min": 15, "max": 20},
+          "source": "BoM (Bureau of Meteorology)"
+        },
+        "dominant_winds_winter_jja": {
+          "direction": "W à NW",
+          "speed_kmh": {"min": 15, "max": 20},
+          "source": "BoM"
+        },
+        "tropopause_altitude_km": {
+          "summer_austral": {"min": 14, "max": 15},
+          "winter_austral": {"min": 11, "max": 12},
+          "note": "hémisphère sud, saisons inversées",
+          "source": "ERA5"
+        }
+      }
+    },
+    {
+      "id": 15,
+      "name": "Nampo (Pyongyang)",
+      "country": "Corée du Nord",
+      "coordinates": {
+        "latitude": 38.74,
+        "longitude": 125.41
+      },
+      "educational_justification": "Port côtier nord-coréen — contexte géopolitique actuel",
+      "historical_context": {
+        "note": "Principal port nord-coréen, accès maritime à Pyongyang (60 km en amont du Taedong)."
+      },
+      "bathymetry": {
+        "ocean_depth_h0_m": {
+          "min": 70,
+          "max": 90,
+          "note": "Mer Jaune — extrêmement peu profonde, l'une des mers les moins profondes au monde",
+          "source": "GEBCO"
+        },
+        "coastal_depth_hc_m": {
+          "min": 5,
+          "max": 8,
+          "note": "port de Nampo, estuaire du Taedong ; vastes estrans de vase à marée basse",
+          "source": "GEBCO / estimations d'après imagerie satellite"
+        },
+        "distance_to_shore_d_km": {
+          "value": 400,
+          "note": "jusqu'à des eaux >200 m (le plateau continental de la Mer Jaune est immense)",
+          "source": "GEBCO"
+        },
+        "specific_note": "La Mer Jaune extrêmement peu profonde et les estrans de vase gigantesques (~10 km à marée basse) atténueraient considérablement tout tsunami. Cependant, l'effet de marée est massif (marnage ~8 m) et un timing à marée haute serait catastrophique."
+      },
+      "topography": {
+        "coastal_slope_percent": {
+          "min": 0.05,
+          "max": 0.5,
+          "note": "estrans de vase, plaine côtière extrêmement plate",
+          "source": "SRTM 30 m (meilleure donnée disponible pour la RPDC)"
+        },
+        "average_altitude_m_asl": {
+          "nampo": {"min": 2, "max": 10},
+          "pyongyang": {"min": 25, "max": 40, "note": "vallée du Taedong"},
+          "source": "SRTM"
+        },
+        "manning_coefficient_n": {
+          "moderate_urbanization": 0.030,
+          "mudflats": 0.020,
+          "source": "Estimation"
+        }
+      },
+      "atmosphere": {
+        "dominant_winds_winter": {
+          "direction": "NW à N (mousson sibérienne)",
+          "speed_kmh": {"min": 20, "max": 30},
+          "note": "très froid",
+          "source": "ERA5 (données in-situ nord-coréennes indisponibles)"
+        },
+        "dominant_winds_summer": {
+          "direction": "S à SE (mousson)",
+          "speed_kmh": {"min": 10, "max": 15},
+          "source": "ERA5"
+        },
+        "tropopause_altitude_km": {
+          "summer": 13,
+          "winter": 10,
+          "source": "ERA5"
+        }
+      }
+    }
+  ],
+  "synthetic_summary_table": [
+    {"city": "Hiroshima", "h0_m": 200, "hc_m": "5–10", "d_km": 60, "slope_percent": "0.5–1.0", "avg_alt_m": "2–15", "manning_n": 0.040, "wind_speed_kmh": "10–15", "wind_direction": "SSW", "tropopause_summer_km": 16.0, "tropopause_winter_km": 11.5},
+    {"city": "Nagasaki", "h0_m": 175, "hc_m": "10–15", "d_km": 200, "slope_percent": "3–8", "avg_alt_m": "2–50", "manning_n": 0.040, "wind_speed_kmh": "8–12", "wind_direction": "S", "tropopause_summer_km": 16.5, "tropopause_winter_km": 11.5},
+    {"city": "Bikini", "h0_m": 4500, "hc_m": "30–55", "d_km": 3, "slope_percent": "1–2", "avg_alt_m": "2–3", "manning_n": 0.025, "wind_speed_kmh": "15–25", "wind_direction": "ENE", "tropopause_summer_km": 17.5, "tropopause_winter_km": 17.0},
+    {"city": "New York", "h0_m": 3000, "hc_m": "6–12", "d_km": 180, "slope_percent": "1–2", "avg_alt_m": "3–20", "manning_n": 0.065, "wind_speed_kmh": "15–20", "wind_direction": "NW", "tropopause_summer_km": 12.5, "tropopause_winter_km": 9.5},
+    {"city": "San Francisco", "h0_m": 3750, "hc_m": "4.5–15", "d_km": 50, "slope_percent": "5–15", "avg_alt_m": "2–50", "manning_n": 0.050, "wind_speed_kmh": "15–30", "wind_direction": "WNW", "tropopause_summer_km": 12.5, "tropopause_winter_km": 10.0},
+    {"city": "Honolulu", "h0_m": 5000, "hc_m": "5–15", "d_km": 7, "slope_percent": "2–5", "avg_alt_m": "3–10", "manning_n": 0.040, "wind_speed_kmh": "15–25", "wind_direction": "ENE", "tropopause_summer_km": 17.0, "tropopause_winter_km": 16.5},
+    {"city": "Mourmansk", "h0_m": 350, "hc_m": "15–30", "d_km": 100, "slope_percent": "10–25", "avg_alt_m": "5–150", "manning_n": 0.030, "wind_speed_kmh": "20–35", "wind_direction": "S/SW", "tropopause_summer_km": 8.5, "tropopause_winter_km": 7.5},
+    {"city": "Sébastopol", "h0_m": 2100, "hc_m": "10–18", "d_km": 150, "slope_percent": "5–15", "avg_alt_m": "2–80", "manning_n": 0.040, "wind_speed_kmh": "15–25", "wind_direction": "NNE", "tropopause_summer_km": 12.0, "tropopause_winter_km": 10.0},
+    {"city": "Haïfa", "h0_m": 2000, "hc_m": "3–14", "d_km": 30, "slope_percent": "1–30", "avg_alt_m": "0–300", "manning_n": 0.040, "wind_speed_kmh": "15–20", "wind_direction": "WNW", "tropopause_summer_km": 16.0, "tropopause_winter_km": 11.0},
+    {"city": "Shanghai", "h0_m": 75, "hc_m": "3–12", "d_km": 650, "slope_percent": "0.05", "avg_alt_m": "2–4", "manning_n": 0.055, "wind_speed_kmh": "10–25", "wind_direction": "SE/NW", "tropopause_summer_km": 16.0, "tropopause_winter_km": 11.0},
+    {"city": "Mumbai", "h0_m": 3000, "hc_m": "2–12", "d_km": 250, "slope_percent": "0.5–2", "avg_alt_m": "0–10", "manning_n": 0.065, "wind_speed_kmh": "20–40", "wind_direction": "W/SW", "tropopause_summer_km": 17.0, "tropopause_winter_km": 16.5},
+    {"city": "Cherbourg", "h0_m": 135, "hc_m": "6–14", "d_km": 200, "slope_percent": "3–8", "avg_alt_m": "2–30", "manning_n": 0.038, "wind_speed_kmh": "20–35", "wind_direction": "WSW", "tropopause_summer_km": 11.5, "tropopause_winter_km": 9.5},
+    {"city": "Londres", "h0_m": 40, "hc_m": "2–10", "d_km": 80, "slope_percent": "0.1–0.5", "avg_alt_m": "2–15", "manning_n": 0.055, "wind_speed_kmh": "15–25", "wind_direction": "SW", "tropopause_summer_km": 11.5, "tropopause_winter_km": 8.5},
+    {"city": "Sydney", "h0_m": 4250, "hc_m": "5–15", "d_km": 27, "slope_percent": "5–15", "avg_alt_m": "3–50", "manning_n": 0.040, "wind_speed_kmh": "15–20", "wind_direction": "NE", "tropopause_summer_km": 14.5, "tropopause_winter_km": 11.5},
+    {"city": "Nampo", "h0_m": 80, "hc_m": "5–8", "d_km": 400, "slope_percent": "0.1", "avg_alt_m": "2–10", "manning_n": 0.025, "wind_speed_kmh": "10–30", "wind_direction": "NW/S", "tropopause_summer_km": 13.0, "tropopause_winter_km": 10.0}
+  ],
+  "primary_sources": {
+    "bathymetry": [
+      {"name": "GEBCO 2023", "url": "gebco.net", "resolution": "15 arc-secondes (~450 m)", "coverage": "Mondiale"},
+      {"name": "NOAA ETOPO", "url": "ngdc.noaa.gov/mgg/global", "resolution": "15 arc-sec", "coverage": "Mondiale"},
+      {"name": "EMODnet Bathymetry", "url": "emodnet-bathymetry.eu", "resolution": "1/16 arc-min (~115 m)", "coverage": "Europe"},
+      {"name": "SHOM (France)", "url": "data.shom.fr", "resolution": "Variable, jusqu'à 1 m", "coverage": "France"},
+      {"name": "JHOD (Japon)", "url": "www1.kaiho.mlit.go.jp", "resolution": "Variable", "coverage": "Japon"},
+      {"name": "NOAA ENC", "url": "charts.noaa.gov", "resolution": "Précision métrique", "coverage": "USA"}
+    ],
+    "topography": [
+      {"name": "SRTM", "url": "earthexplorer.usgs.gov", "resolution": "30 m", "coverage": "60°N–56°S"},
+      {"name": "USGS 3DEP", "url": "elevation.nationalmap.gov", "resolution": "1–10 m (LiDAR)", "coverage": "USA"},
+      {"name": "IGN RGE Alti", "url": "geoservices.ign.fr", "resolution": "1–5 m", "coverage": "France"},
+      {"name": "Arctic DEM", "url": "pgc.umn.edu/data/arcticdem", "resolution": "2 m", "coverage": ">60°N"},
+      {"name": "GSI Japan DEM", "url": "fgd.gsi.go.jp", "resolution": "5–10 m", "coverage": "Japon"},
+      {"name": "Geoscience Australia", "url": "elevation.fsdf.org.au", "resolution": "5 m", "coverage": "Australie"},
+      {"name": "UK Environment Agency LiDAR", "url": "environment.data.gov.uk", "resolution": "0.5–2 m", "coverage": "Angleterre"}
+    ],
+    "atmosphere": [
+      {"name": "ERA5 (ECMWF)", "url": "cds.climate.copernicus.eu", "type": "Réanalyse globale, 0.25°, horaire, depuis 1940"},
+      {"name": "Radiosondages (Univ. Wyoming)", "url": "weather.uwyo.edu/upperair/sounding.html", "type": "Profils verticaux temps réel et archives"},
+      {"name": "NOAA NCEI", "url": "ncei.noaa.gov", "type": "Climatologies"},
+      {"name": "JMA", "url": "data.jma.go.jp", "type": "Japon"},
+      {"name": "Météo-France", "url": "donneespubliques.meteofrance.fr", "type": "France"},
+      {"name": "Met Office", "url": "metoffice.gov.uk/research/climate/maps-and-data", "type": "UK"}
+    ],
+    "manning_references": [
+      "ASCE 7-22, Chapter 6 (Tsunami Loads and Effects)",
+      "FEMA P-646 (Guidelines for Design of Structures for Vertical Evacuation from Tsunamis)",
+      "Kaiser G. et al. (2011), 'Mapping tsunami impacts on land cover and related ecosystem service supply', Natural Hazards and Earth System Sciences",
+      "Bricker J.D. et al. (2015), 'Contribution of trapped air, deck superelevation, and nearby structures to bridge deck failure during a tsunami', Journal of Hydraulic Engineering"
+    ]
+  },
+  "implementation_notes": {
+    "green_law_shoaling": {
+      "description": "Hauteur de la vague en eaux peu profondes",
+      "formula": "H_c = H_0 * (h_0 / h_c)^(1/4)",
+      "variables": {
+        "H_0": "hauteur initiale",
+        "h_0": "profondeur au large",
+        "h_c": "profondeur côtière"
+      }
+    },
+    "synolakis_runup": {
+      "description": "Run-up pour plage de pente douce",
+      "formula": "R = 2.831 * (cot(β))^(-1/2) * H_c^(5/4) * d^(-1/4)",
+      "note": "Plus la pente β est faible (Shanghai, Mumbai), plus le run-up horizontal est grand (mais la hauteur verticale est moindre)."
+    },
+    "land_penetration_flooding": {
+      "description": "Distance approximative de pénétration avec Manning",
+      "formula": "x_max ≈ R^(5/3) / (n^2 * g * S)",
+      "variables": {
+        "S": "pente terrestre",
+        "n": "coefficient de Manning",
+        "g": "accélération de la gravité"
+      }
+    },
+    "mushroom_cloud_vs_tropopause": [
+      {"yield": "15 kt (Hiroshima)", "mushroom_height_km": 12, "comparison": "Touche ou perce la tropopause à toutes latitudes"},
+      {"yield": "1 Mt", "mushroom_height_km": 25, "comparison": "Stratosphère partout"},
+      {"yield": "15 Mt (Castle Bravo)", "mushroom_height_km": 40, "comparison": "Bien dans la stratosphère"},
+      {"yield": "50 Mt (Tsar Bomba)", "mushroom_height_km": 65, "comparison": "Mésosphère"}
+    ],
+    "arctic_note": "À Mourmansk (tropopause ~7.5 km en hiver), même une arme tactique de 5 kt (champignon ~8 km) percera la tropopause et injectera des débris dans la stratosphère — fallout de plus longue durée et plus étendu qu'aux latitudes tropicales."
+  },
+  "data_precision_warnings": [
+    {
+      "topic": "Corée du Nord",
+      "warning": "Données bathymétriques et topographiques de basse résolution (SRTM 30 m uniquement). Pas de données in-situ accessibles."
+    },
+    {
+      "topic": "Russie (Mourmansk/Severomorsk)",
+      "warning": "Zone militaire sensible. Les cartes marines détaillées russes ne sont pas en accès libre. GEBCO + Arctic DEM sont les meilleures alternatives."
+    },
+    {
+      "topic": "Coefficients de Manning",
+      "warning": "Ce sont des estimations basées sur la littérature. Pour une précision supérieure, il faudrait des études hydrauliques locales ou des modèles LiDAR de rugosité urbaine."
+    },
+    {
+      "topic": "Variations saisonnières",
+      "warning": "La tropopause et les vents varient significativement. Il serait idéal d'intégrer un sélecteur de saison dans l'interface."
+    }
+  ]
+}
