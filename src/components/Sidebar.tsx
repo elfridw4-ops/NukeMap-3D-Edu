@@ -88,7 +88,7 @@ export function Sidebar({
       !isSidebarOpen && "md:w-0 md:opacity-0 md:-translate-x-full md:pointer-events-none",
       // Mobile style: fixed bottom-sheet
       "fixed bottom-0 left-0 right-0 w-full rounded-t-3xl border-t border-zinc-800 z-30",
-      isCollapsed ? "h-[75px] max-h-[75px]" : "h-[45vh] max-h-[45vh]"
+      isCollapsed ? "h-[75px] max-h-[75px]" : "h-[55vh] md:h-screen"
     )}>
       {/* Mobile Drag Handle */}
       <div 
@@ -117,7 +117,7 @@ export function Sidebar({
       </div>
 
       <div className={cn(
-        "p-5 flex-1 flex-col gap-6 overflow-y-auto hide-scrollbar",
+        "p-4 md:p-5 flex-1 flex-col gap-5 md:gap-6 overflow-y-auto hide-scrollbar",
         isCollapsed ? "hidden md:flex" : "flex"
       )}>
         

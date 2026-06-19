@@ -99,10 +99,10 @@ export function LandingPage({ onLaunchSimulator }: LandingPageProps) {
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.1 }}
-          className="text-4xl md:text-6xl font-sans font-bold tracking-tight text-zinc-100 max-w-4xl leading-[1.1]"
+          className="text-4xl sm:text-5xl md:text-7xl font-sans font-bold tracking-tight text-zinc-100 max-w-4xl leading-[1.1]"
         >
-          NUKEMAP EDU
-          <span className="block text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-red-800 text-3xl md:text-5xl font-mono tracking-wide mt-3 font-semibold">
+          NUKEMAP <span className="text-red-600">EDU</span>
+          <span className="block text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-red-800 text-2xl sm:text-3xl md:text-5xl font-mono tracking-wide mt-3 font-semibold">
             VECTEURS &amp; PROPAGATION 3D
           </span>
         </motion.h1>
@@ -215,7 +215,7 @@ export function LandingPage({ onLaunchSimulator }: LandingPageProps) {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
             
             {/* Feature 1 */}
             <div className="flex flex-col bg-zinc-950 border border-zinc-905 p-6 rounded-xl hover:border-red-900/50 hover:shadow-xl hover:shadow-red-950/20 transition-all duration-300 group">
@@ -276,7 +276,7 @@ export function LandingPage({ onLaunchSimulator }: LandingPageProps) {
             </p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 md:gap-8">
             {cases.map((cs, idx) => (
               <div key={idx} className="flex flex-col bg-zinc-950/60 border border-zinc-900 p-6 rounded-xl hover:bg-zinc-900/30 transition-all">
                 <div className="flex items-center gap-3 border-b border-zinc-900 pb-4 mb-4">
