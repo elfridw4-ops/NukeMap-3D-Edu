@@ -6,30 +6,32 @@ import { WeaponConfig, LaunchParams, EnvironmentParams, PastStrike } from './typ
 import { fetchAutomaticGeoData, DEFAULT_AUTOMATIC_GEO_DATA, AutomaticGeoData } from './lib/geoDataFetcher';
 import { Play, Pause, RotateCcw, LayoutDashboard, Compass } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
+import { usePersistedState } from './lib/hooks';
+import { PWAController } from './components/PWAController';
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<'landing' | 'simulator'>('landing');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [weapon, setWeapon] = useState<WeaponConfig>(WEAPON_PRESETS[2]); // Default: Fat Man
-  const [customYield, setCustomYield] = useState<number>(100);
-  const [target, setTarget] = useState<{ lng: number; lat: number } | null>({
+  const [currentTab, setCurrentTab] = usePersistedState<'landing' | 'simulator'>('currentTab', 'landing');
+  const [isSidebarOpen, setIsSidebarOpen] = usePersistedState('isSidebarOpen', true);
+  const [weapon, setWeapon] = usePersistedState<WeaponConfig>('weapon', WEAPON_PRESETS[2]); // Default: Fat Man
+  const [customYield, setCustomYield] = usePersistedState<number>('customYield', 100);
+  const [target, setTarget] = usePersistedState<{ lng: number; lat: number } | null>('target', {
     lng: 2.3522, // Paris (Demonstration)
     lat: 48.8566
   });
   
-  const [pastStrikes, setPastStrikes] = useState<PastStrike[]>([]);
-  const [multiStrikeMode, setMultiStrikeMode] = useState<boolean>(false);
+  const [pastStrikes, setPastStrikes] = usePersistedState<PastStrike[]>('pastStrikes', []);
+  const [multiStrikeMode, setMultiStrikeMode] = usePersistedState<boolean>('multiStrikeMode', false);
 
-  const [origin, setOrigin] = useState<{ lng: number; lat: number } | null>(null);
-  const [selectionMode, setSelectionMode] = useState<'target' | 'origin'>('target');
-  const [launchParams, setLaunchParams] = useState<LaunchParams>({
+  const [origin, setOrigin] = usePersistedState<{ lng: number; lat: number } | null>('origin', null);
+  const [selectionMode, setSelectionMode] = usePersistedState<'target' | 'origin'>('selectionMode', 'target');
+  const [launchParams, setLaunchParams] = usePersistedState<LaunchParams>('launchParams', {
     altitudeKm: 1200,
     velocityMach: 19.6,
     vectorId: 'icbm',
     customSpeedKmh: 10000
   });
 
-  const [environmentParams, setEnvironmentParams] = useState<EnvironmentParams>({
+  const [environmentParams, setEnvironmentParams] = usePersistedState<EnvironmentParams>('environmentParams', {
     explosionType: 'airburst',
     windDirection: 90, // East default
     windSpeed: 20, // km/h
@@ -247,7 +249,7 @@ export default function App() {
     }
   }, [target?.lat, target?.lng, targetDetails.isWater, environmentParams.autoShoreDistance, autoGeoData?.shoreDistanceKm]);
 
-  const [viewState, setViewState] = useState({
+  const [viewState, setViewState] = usePersistedState('viewState', {
     longitude: 2.3522,
     latitude: 48.8566,
     zoom: 10,
@@ -893,6 +895,7 @@ export default function App() {
           </div>
         )}
       </main>
+      <PWAController />
     </div>
   );
 }

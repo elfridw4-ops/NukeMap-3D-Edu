@@ -1,25 +1,17 @@
 {
-  "name": "NukeMap EDU",
-  "short_name": "NukeMap",
-  "description": "Simulateur et outil éducatif sur les impacts nucléaires",
-  "start_url": ".",
+  "version": "1.0.0",
+  "name": "NUKEMAP EDU",
+  "short_name": "NukeMap EDU",
+  "description": "Simulateur scientifique interactif 3D d'impacts nucléaires.",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#09090b",
   "theme_color": "#ef4444",
   "icons": [
     {
-      "src": "/icon.png",
-      "sizes": "1024x1024",
-      "type": "image/png"
-    },
-    {
-      "src": "/icon.png",
+      "src": "/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png"
-    },
-    {
-      "src": "/icon.png",
-      "sizes": "192x192",
       "type": "image/png"
     }
   ]
