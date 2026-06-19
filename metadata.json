@@ -1,6 +1,6 @@
 {
-  "name": "NukeMap 3D Edu",
-  "description": "Educational tool reflecting historical nuclear scaling laws using 3D visualization.",
+  "name": "NUKEMAP EDU",
+  "description": "Simulateur pédagogique interactif 3D d'impacts nucléaires basé sur les lois d'échelle de Glasstone & Dolan.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
