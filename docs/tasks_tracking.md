@@ -6,9 +6,10 @@
 - [x] Système de persistance `usePersistedState`.
 - [x] Manifest PWA et Service Worker.
 - [x] Simulation de tsunamis (shoaling).
+- [x] Système de documentation complet et vivant (ADR, historique, charte graphique, audit de providers, etc.).
 
 ## Tâches en Cours
-- [ ] Finalisation du système documentaire complet.
+- [ ] Audit d'accessibilité au clavier de l'interface NUKEMAP EDU.
 - [ ] Audit final de l'installabilité PWA.
 
 ## Tâches Futures

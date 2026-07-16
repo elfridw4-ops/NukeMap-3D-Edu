@@ -28,3 +28,11 @@
 - Ajout des métadonnées Open Graph et Twitter Cards.
 ### 2026-06-19
 - Initialisation du système documentaire vivant (Protocole Architecte Documentaliste Senior).
+
+### 2026-07-06
+- Mise à jour majeure du système documentaire de NUKEMAP EDU.
+- Activation et mise en conformité de la charte opérationnelle de l'agent IA (`AGENTS.md`) avec suppression des placeholders `⚠️ NON DÉFINI`.
+- Rédaction complète de la Charte Graphique V2 "Bunker Chic" (`docs/charte_graphique.md`).
+- Création du journal d'interactions brute (`docs/chat_history.md`) et de l'audit technique d'architecture des contextes (`docs/provider_audit.md`).
+- Impact : Robustesse, alignement sémantique et traçabilité de niveau production pour la suite du projet.
+
