@@ -61,6 +61,8 @@ export default function App() {
 
   // Mobile drawer state for Propagation Chronology
   const [isMobileHudOpen, setIsMobileHudOpen] = useState(false);
+  // Conserve l'état du bottom sheet afin de positionner les actions flottantes au-dessus du panneau.
+  const [isMobileSidebarCollapsed, setIsMobileSidebarCollapsed] = useState(false);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     // Only handle left mouse button
@@ -536,6 +538,7 @@ export default function App() {
         pastStrikesCount={pastStrikes.length}
         onClearPastStrikes={() => setPastStrikes([])}
         casualtyReport={casualtyReport}
+        onMobileCollapsedChange={setIsMobileSidebarCollapsed}
       />
 
       {/* Sidebar Toggle Handle for Desktop */}
@@ -551,7 +554,7 @@ export default function App() {
 
       <main className="relative flex-1 h-full z-0 overflow-hidden">
         {/* Floating tab selector to switch back to portal or review current mode */}
-        <div className="absolute top-4 left-4 z-10 flex gap-2">
+        <div className="absolute top-4 left-4 right-4 z-10 flex flex-wrap gap-2 md:right-auto">
           <button
             type="button"
             onClick={() => setCurrentTab('landing')}
@@ -751,7 +754,7 @@ export default function App() {
           <button
             type="button"
             onClick={() => setIsMobileHudOpen(true)}
-            className="fixed bottom-24 right-4 z-20 md:hidden bg-zinc-950/95 border border-zinc-800 hover:border-red-500 text-white font-bold p-3 px-3.5 rounded-2xl shadow-2xl flex items-center gap-2 text-[9px] font-mono tracking-widest active:scale-95 transition-all cursor-pointer backdrop-blur-md"
+            className={`fixed ${isMobileSidebarCollapsed ? 'bottom-24' : 'bottom-[calc(55dvh+1rem)]'} right-4 z-40 md:hidden bg-zinc-950/95 border border-zinc-800 hover:border-red-500 text-white font-bold p-3 px-3.5 rounded-2xl shadow-2xl flex items-center gap-2 text-[9px] font-mono tracking-widest active:scale-95 transition-all cursor-pointer backdrop-blur-md`}
           >
             <span className="relative flex h-2 w-2">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
@@ -868,7 +871,7 @@ export default function App() {
 
         {/* UI Overlay info */}
         {target && isDetonated && (
-          <div className="absolute top-4 inset-x-4 md:inset-x-auto md:top-auto md:bottom-6 md:right-6 z-10 bg-zinc-950/80 backdrop-blur-lg border border-zinc-800/60 p-4 rounded-xl shadow-2xl pointer-events-none flex flex-col gap-3 md:w-max w-auto">
+          <div className="absolute top-20 inset-x-4 md:inset-x-auto md:top-auto md:bottom-6 md:right-6 z-10 bg-zinc-950/80 backdrop-blur-lg border border-zinc-800/60 p-4 rounded-xl shadow-2xl pointer-events-none flex flex-col gap-3 md:w-max w-auto">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center border border-red-500/30">
                 <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />

@@ -1129,7 +1129,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
   ]);
 
   return (
-    <div className="w-full h-full relative cursor-crosshair">
+    <div className="w-full h-full relative cursor-crosshair touch-none">
       {/* Shockwave PSI Status Bar */}
       <AnimatePresence>
         {currentBlastWaveRadius > 0 && currentPsi > 0 && currentBlastWaveRadius < radii.lightBlast && (
@@ -1152,7 +1152,17 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
       <DeckGL
         viewState={viewState}
         onViewStateChange={({ viewState }) => setViewState(viewState)}
-        controller={true}
+        controller={{
+          // Active explicitement le déplacement vertical et horizontal sur écran tactile.
+          dragPan: true,
+          // Conserve le zoom tactile sans détourner le geste de panoramique.
+          touchZoom: true,
+          // Évite qu'une rotation involontaire bloque le déplacement de la carte.
+          touchRotate: false,
+          scrollZoom: true,
+          doubleClickZoom: true,
+          keyboard: true
+        }}
         layers={layers}
         onClick={(info) => {
           if (info.coordinate) {
@@ -1175,25 +1185,28 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
 
       <div className="absolute top-4 flex w-full pointer-events-none z-[100] px-4 items-start justify-end gap-3">
         <div className="pointer-events-auto flex items-center bg-zinc-900 border border-zinc-700/50 rounded-md shadow-xl overflow-hidden mr-10 relative">
-          <button 
+          <button
+            type="button"
             onClick={() => setMapMode('night')}
-            className={`p-2 transition-colors duration-200 ${mapMode === 'night' ? 'bg-zinc-800 text-blue-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
+            className={`min-h-11 min-w-11 p-3 transition-colors duration-200 ${mapMode === 'night' ? 'bg-zinc-800 text-blue-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
             title="Mode Nuit"
           >
             <Moon className="w-4 h-4" />
           </button>
           <div className="w-[1px] h-4 bg-zinc-800" />
-          <button 
+          <button
+            type="button"
             onClick={() => setMapMode('day')}
-            className={`p-2 transition-colors duration-200 ${mapMode === 'day' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
+            className={`min-h-11 min-w-11 p-3 transition-colors duration-200 ${mapMode === 'day' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
             title="Mode Jour"
           >
             <Sun className="w-4 h-4" />
           </button>
           <div className="w-[1px] h-4 bg-zinc-800" />
-          <button 
+          <button
+            type="button"
             onClick={() => setMapMode('satellite')}
-            className={`p-2 transition-colors duration-200 ${mapMode === 'satellite' ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
+            className={`min-h-11 min-w-11 p-3 transition-colors duration-200 ${mapMode === 'satellite' ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
             title="Mode Satellite"
           >
             <Globe className="w-4 h-4" />

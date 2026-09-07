@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { WeaponConfig, LaunchParams, EnvironmentParams, BlastRadii } from '../types';
 import { AlertTriangle, ChevronUp } from 'lucide-react';
 import { cn } from '../lib/utils';
@@ -46,6 +46,7 @@ interface SidebarProps {
   pastStrikesCount: number;
   onClearPastStrikes: () => void;
   casualtyReport?: any;
+  onMobileCollapsedChange?: (collapsed: boolean) => void;
 }
 
 export function Sidebar({
@@ -76,9 +77,18 @@ export function Sidebar({
   setMultiStrikeMode,
   pastStrikesCount,
   onClearPastStrikes,
-  casualtyReport
+  casualtyReport,
+  onMobileCollapsedChange
 }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // Synchronise l'état vers le parent après le rendu pour éviter une mise à jour pendant le rendu.
+  useEffect(() => {
+    onMobileCollapsedChange?.(isCollapsed);
+  }, [isCollapsed, onMobileCollapsedChange]);
+
+  // Bascule l'état du bottom sheet mobile au clavier ou au toucher.
+  const toggleMobileCollapse = () => setIsCollapsed(prev => !prev);
 
   return (
     <div className={cn(
@@ -91,16 +101,18 @@ export function Sidebar({
       isCollapsed ? "h-[75px] max-h-[75px]" : "h-[55vh] md:h-screen"
     )}>
       {/* Mobile Drag Handle */}
-      <div 
-        className="w-full flex justify-center pt-3 pb-2 md:hidden cursor-pointer shrink-0" 
-        onClick={() => setIsCollapsed(!isCollapsed)}
+      <button
+        type="button"
+        aria-label={isCollapsed ? "Développer le panneau de configuration" : "Réduire le panneau de configuration"}
+        aria-expanded={!isCollapsed}
+        className="w-full flex justify-center pt-3 pb-2 md:hidden cursor-pointer shrink-0 min-h-11"
+        onClick={toggleMobileCollapse}
       >
         <div className="w-10 h-1.5 bg-zinc-700/80 rounded-full" />
-      </div>
+      </button>
 
-      <div 
-        className="px-5 pb-4 md:py-5 md:px-5 border-b border-zinc-800/50 bg-zinc-900/30 flex justify-between items-center cursor-pointer md:cursor-default shrink-0"
-        onClick={() => { if(window.innerWidth < 768) setIsCollapsed(!isCollapsed); }}
+      <div
+        className="px-5 pb-4 md:py-5 md:px-5 border-b border-zinc-800/50 bg-zinc-900/30 flex justify-between items-center shrink-0"
       >
         <div>
           <h1 className="text-xl font-bold font-sans tracking-tight mb-0.5 text-white flex items-center gap-2">
@@ -111,7 +123,13 @@ export function Sidebar({
             Sys. Command // SIM-NC-01
           </p>
         </div>
-        <button className="md:hidden text-zinc-400 hover:text-white p-2.5 rounded-full bg-zinc-800/50 transition-colors">
+        <button
+          type="button"
+          aria-label={isCollapsed ? "Développer le panneau de configuration" : "Réduire le panneau de configuration"}
+          aria-expanded={!isCollapsed}
+          onClick={toggleMobileCollapse}
+          className="md:hidden text-zinc-400 hover:text-white p-2.5 min-h-11 min-w-11 rounded-full bg-zinc-800/50 transition-colors flex items-center justify-center"
+        >
           <ChevronUp className={cn("w-5 h-5 transition-transform duration-300", isCollapsed ? "" : "rotate-180")} />
         </button>
       </div>

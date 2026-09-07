@@ -120,7 +120,7 @@ export function TargetConfigSection({
         <button
           onClick={() => setSimulationMode('instant')}
           className={cn(
-            "flex-1 py-1.5 text-xs font-medium rounded transition-colors flex items-center justify-center gap-2",
+            "flex-1 min-h-11 py-2 text-xs font-medium rounded transition-colors flex items-center justify-center gap-2",
             simulationMode === 'instant' 
               ? "bg-zinc-800 text-white shadow-sm" 
               : "text-zinc-500 hover:text-zinc-300"
@@ -131,7 +131,7 @@ export function TargetConfigSection({
         <button
           onClick={() => setSimulationMode('ballistic')}
           className={cn(
-            "flex-1 py-1.5 text-xs font-medium rounded transition-colors flex items-center justify-center gap-2",
+            "flex-1 min-h-11 py-2 text-xs font-medium rounded transition-colors flex items-center justify-center gap-2",
             simulationMode === 'ballistic' 
               ? "bg-zinc-800 text-white shadow-sm" 
               : "text-zinc-500 hover:text-zinc-300"
@@ -162,13 +162,13 @@ export function TargetConfigSection({
             type="button"
             onClick={() => setMultiStrikeMode(!multiStrikeMode)}
             className={cn(
-              "w-9 h-5 rounded-full relative transition-colors focus:outline-none focus:ring-2 focus:ring-sky-900",
+              "w-11 h-11 rounded-full relative transition-colors focus:outline-none focus:ring-2 focus:ring-sky-900",
               multiStrikeMode ? "bg-sky-600 border border-sky-500" : "bg-zinc-800 border border-zinc-700"
             )}
           >
             <span className={cn(
-              "absolute top-0.5 left-0.5 w-3.5 h-3.5 bg-zinc-200 rounded-full transition-transform",
-              multiStrikeMode ? "translate-x-4 bg-white" : "translate-x-0"
+              "absolute top-3.5 left-3.5 w-4 h-4 bg-zinc-200 rounded-full transition-transform",
+              multiStrikeMode ? "translate-x-3 bg-white" : "translate-x-0"
             )} />
           </button>
         </div>
