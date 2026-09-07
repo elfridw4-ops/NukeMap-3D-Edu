@@ -1,7 +1,10 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
+import { fileURLToPath } from 'node:url';
 import {defineConfig, loadEnv} from 'vite';
+
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
 export default defineConfig(({mode}) => {
   const env = loadEnv(mode, '.', '');
@@ -19,19 +22,21 @@ export default defineConfig(({mode}) => {
       chunkSizeWarningLimit: 1000,
       rollupOptions: {
         output: {
-          manualChunks: {
-            react: ['react', 'react-dom'],
-            map: ['maplibre-gl', 'react-map-gl'],
-            deck: ['@deck.gl/react', '@deck.gl/layers'],
-            motion: ['motion'],
-            vendors: ['lucide-react', 'clsx', 'tailwind-merge'],
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return undefined;
+            if (id.includes('react') || id.includes('scheduler')) return 'react';
+            if (id.includes('maplibre-gl') || id.includes('react-map-gl')) return 'map';
+            if (id.includes('@deck.gl')) return 'deck';
+            if (id.includes('motion')) return 'motion';
+            if (id.includes('lucide-react') || id.includes('clsx') || id.includes('tailwind-merge')) return 'vendors';
+            return undefined;
           },
         },
       },
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
+      // Do not modify—file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
     },
   };

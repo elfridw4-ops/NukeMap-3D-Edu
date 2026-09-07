@@ -1,7 +1,7 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Map, { NavigationControl } from 'react-map-gl/maplibre';
-import maplibregl from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer, PolygonLayer, PointCloudLayer, PathLayer } from '@deck.gl/layers';
 import { Sun, Moon, Globe } from 'lucide-react';
