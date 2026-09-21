@@ -4,7 +4,7 @@ import Map, { NavigationControl } from 'react-map-gl/maplibre';
 import * as maplibregl from 'maplibre-gl';
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer, PolygonLayer, PointCloudLayer, PathLayer } from '@deck.gl/layers';
-import { Sun, Moon, Globe } from 'lucide-react';
+import { Sun, Moon, Globe, Sliders, Check, RotateCcw, Key, X, AlertCircle } from 'lucide-react';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { BlastRadii, EnvironmentParams, PastStrike } from '../types';
 import { calculateTsunamiMetrics, haversineKm, flightTimeMin, TsunamiMetrics } from '../lib/nuclearMath';
@@ -274,8 +274,17 @@ const falloutDriftParticles = (() => {
 })();
 
 type MapMode = 'night' | 'day' | 'satellite';
+type MapProvider = 'mapbox' | 'free';
 
-const MAP_STYLES: Record<MapMode, any> = {
+// Styles vectoriels officiels Mapbox (utilisés lorsque le mode Mapbox et un token sont configurés)
+const MAPBOX_STYLES: Record<MapMode, string> = {
+  night: 'mapbox://styles/mapbox/dark-v11',
+  day: 'mapbox://styles/mapbox/light-v11',
+  satellite: 'mapbox://styles/mapbox/satellite-streets-v12'
+};
+
+// Styles raster libres de droits sans clé API requise (CARTO Dark, CARTO Light, ESRI World Imagery)
+const FREE_MAP_STYLES: Record<MapMode, any> = {
   night: {
     version: 8,
     sources: {
@@ -350,16 +359,193 @@ const MAP_STYLES: Record<MapMode, any> = {
   }
 };
 
+/**
+ * Traducteur d'URL Mapbox vers les endpoints HTTP officiels pour MapLibre GL.
+ * Rôle : Permet de convertir les URI propriétaires 'mapbox://' en requêtes HTTPS sécurisées
+ * avec injection transparente du jeton d'accès Mapbox (access_token).
+ *
+ * @param url URL de la ressource demandée par MapLibre GL
+ * @param resourceType Type de ressource (Style, Source, SpriteJSON, SpriteImage, Glyphs, Tile)
+ * @param token Jeton d'accès public Mapbox (pk.eyJ...)
+ */
+export function transformMapboxUrl(url: string, resourceType: string, token: string): { url: string } {
+  // En l'absence de token ou si l'URL n'est pas Mapbox, retourner l'URL sans modification
+  if (!token || !token.trim()) {
+    return { url };
+  }
+
+  const cleanToken = token.trim();
+
+  // Résolution des protocoles propriétaires mapbox://
+  if (url.startsWith('mapbox://')) {
+    // 1. Feuilles de styles Mapbox (ex: mapbox://styles/mapbox/dark-v11)
+    if (url.startsWith('mapbox://styles/')) {
+      const stylePath = url.replace('mapbox://styles/', '');
+      return {
+        url: `https://api.mapbox.com/styles/v1/${stylePath}?access_token=${cleanToken}`
+      };
+    }
+
+    // 2. Sprites d'icônes et symboles (ex: mapbox://sprites/mapbox/dark-v11@2x.json)
+    if (url.startsWith('mapbox://sprites/')) {
+      const spritePath = url.replace('mapbox://sprites/', '');
+      const match = spritePath.match(/^([^\/]+)\/([^\/@]+)(@[0-9]+x)?(\.(?:json|png))?$/);
+      if (match) {
+        const [, user, styleId, scale, ext] = match;
+        const scaleStr = scale || '';
+        const extStr = ext || '';
+        return {
+          url: `https://api.mapbox.com/styles/v1/${user}/${styleId}/sprite${scaleStr}${extStr}?access_token=${cleanToken}`
+        };
+      }
+      return {
+        url: `https://api.mapbox.com/styles/v1/${spritePath}?access_token=${cleanToken}`
+      };
+    }
+
+    // 3. Glyphes / Polices vectorielles PBF (ex: mapbox://fonts/mapbox/{fontstack}/{range}.pbf)
+    if (url.startsWith('mapbox://fonts/')) {
+      const fontPath = url.replace('mapbox://fonts/', '');
+      return {
+        url: `https://api.mapbox.com/fonts/v1/${fontPath}?access_token=${cleanToken}`
+      };
+    }
+
+    // 4. Tuiles et sources de données vectorielles (ex: mapbox://mapbox.mapbox-streets-v8)
+    const sourcePath = url.replace('mapbox://', '');
+    return {
+      url: `https://api.mapbox.com/v4/${sourcePath}.json?secure&access_token=${cleanToken}`
+    };
+  }
+
+  // Traitement des requêtes directes vers api.mapbox.com n'ayant pas encore de token
+  if (url.includes('api.mapbox.com') && !url.includes('access_token=')) {
+    const separator = url.includes('?') ? '&' : '?';
+    return {
+      url: `${url}${separator}access_token=${cleanToken}`
+    };
+  }
+
+  return { url };
+}
+
 export function MapView({ pastStrikes, target, origin, radii, environmentParams, effectiveYield, onMapClick, viewState, setViewState, simulationMode, flightProgress, launchParams, targetDetails, detonationTimeMs, isDetonationAnimating, isDetonationPaused, multiStrikeMode, tsunamiMetrics }: MapViewProps) {
   
+  // Mode de rendu visuel de la carte (Nuit, Jour, Satellite)
   const [mapMode, setMapMode] = useState<MapMode>(() => {
     const saved = localStorage.getItem('nukemap_map_mode');
     return (saved as MapMode) || 'night';
   });
 
+  // Fournisseur cartographique actif : 'mapbox' pour vectoriel HD, 'free' pour raster CARTO/ESRI
+  const [mapProvider, setMapProvider] = useState<MapProvider>(() => {
+    const saved = localStorage.getItem('nukemap_map_provider');
+    if (saved === 'mapbox' || saved === 'free') return saved;
+    const envToken = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MAPBOX_TOKEN) ||
+      (typeof process !== 'undefined' && (process.env as any)?.VITE_MAPBOX_TOKEN);
+    const localToken = localStorage.getItem('nukemap_mapbox_token');
+    return ((localToken && localToken.trim().length > 0) || (envToken && envToken.trim().length > 0)) ? 'mapbox' : 'free';
+  });
+
+  // Jeton Mapbox : vérifie d'abord le stockage local de l'utilisateur puis la variable d'environnement
+  const [mapboxToken, setMapboxToken] = useState<string>(() => {
+    return localStorage.getItem('nukemap_mapbox_token') ||
+      (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MAPBOX_TOKEN) ||
+      (typeof process !== 'undefined' && (process.env as any)?.VITE_MAPBOX_TOKEN) ||
+      '';
+  });
+
+  // URL de style personnalisé Mapbox optionnelle (ex: mapbox://styles/user/style-id)
+  const [customStyleUrl, setCustomStyleUrl] = useState<string>(() => {
+    return localStorage.getItem('nukemap_mapbox_custom_style') || '';
+  });
+
+  // États du panneau de réglages cartographiques
+  const [isConfigOpen, setIsConfigOpen] = useState(false);
+  const [tokenInput, setTokenInput] = useState(mapboxToken);
+  const [customStyleInput, setCustomStyleInput] = useState(customStyleUrl);
+  const [providerInput, setProviderInput] = useState<MapProvider>(mapProvider);
+  const [configFeedback, setConfigFeedback] = useState<string | null>(null);
+
+  // Synchronisation de l'affichage du mode jour/nuit/satellite dans le localStorage
   useEffect(() => {
     localStorage.setItem('nukemap_map_mode', mapMode);
   }, [mapMode]);
+
+  // Ouverture du panneau de configuration avec rafraîchissement des champs
+  const handleOpenConfig = () => {
+    setTokenInput(mapboxToken);
+    setCustomStyleInput(customStyleUrl);
+    setProviderInput(mapProvider);
+    setConfigFeedback(null);
+    setIsConfigOpen(true);
+  };
+
+  // Sauvegarde des paramètres et application instantanée
+  const handleSaveConfig = () => {
+    const trimmedToken = tokenInput.trim();
+    const trimmedStyle = customStyleInput.trim();
+
+    setMapboxToken(trimmedToken);
+    setCustomStyleUrl(trimmedStyle);
+    setMapProvider(providerInput);
+
+    if (trimmedToken) {
+      localStorage.setItem('nukemap_mapbox_token', trimmedToken);
+    } else {
+      localStorage.removeItem('nukemap_mapbox_token');
+    }
+
+    if (trimmedStyle) {
+      localStorage.setItem('nukemap_mapbox_custom_style', trimmedStyle);
+    } else {
+      localStorage.removeItem('nukemap_mapbox_custom_style');
+    }
+
+    localStorage.setItem('nukemap_map_provider', providerInput);
+    setConfigFeedback('Configuration cartographique enregistrée avec succès.');
+    setTimeout(() => {
+      setIsConfigOpen(false);
+      setConfigFeedback(null);
+    }, 1000);
+  };
+
+  // Réinitialisation vers le fournisseur gratuit (CARTO & ESRI)
+  const handleResetToFree = () => {
+    setTokenInput('');
+    setCustomStyleInput('');
+    setProviderInput('free');
+    setMapboxToken('');
+    setCustomStyleUrl('');
+    setMapProvider('free');
+    localStorage.removeItem('nukemap_mapbox_token');
+    localStorage.removeItem('nukemap_mapbox_custom_style');
+    localStorage.setItem('nukemap_map_provider', 'free');
+    setConfigFeedback('Fonds libres rétablis (aucun token actif).');
+    setTimeout(() => {
+      setIsConfigOpen(false);
+      setConfigFeedback(null);
+    }, 1000);
+  };
+
+  // Calcul dynamique du style cartographique actif
+  const activeMapStyle = useMemo(() => {
+    if (mapProvider === 'mapbox' && mapboxToken.trim()) {
+      if (customStyleUrl.trim()) {
+        return customStyleUrl.trim();
+      }
+      return MAPBOX_STYLES[mapMode];
+    }
+    return FREE_MAP_STYLES[mapMode];
+  }, [mapProvider, mapboxToken, customStyleUrl, mapMode]);
+
+  // Callback de transformation d'URL pour injecter le token Mapbox dans MapLibre
+  const transformRequestCallback = useMemo(() => {
+    if (mapProvider !== 'mapbox' || !mapboxToken.trim()) {
+      return undefined;
+    }
+    return (url: string, resourceType: any) => transformMapboxUrl(url, resourceType, mapboxToken);
+  }, [mapProvider, mapboxToken]);
 
   // 1. Fireball Progress & Color Calculations (80ms to 800ms)
   const fireballProgress = Math.max(0, Math.min(1, (detonationTimeMs - 80) / 720));
@@ -1173,9 +1359,13 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
       >
         <Map
           mapLib={maplibregl as any}
-          mapStyle={MAP_STYLES[mapMode]}
+          mapStyle={activeMapStyle}
+          transformRequest={transformRequestCallback}
           reuseMaps
           attributionControl={true}
+          onError={(e) => {
+            console.warn('[MapLibre Info] Notification du moteur cartographique:', e);
+          }}
         >
           <div className="absolute top-4 right-4 z-10 pointer-events-auto">
             <NavigationControl visualizePitch={true} />
@@ -1211,8 +1401,174 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           >
             <Globe className="w-4 h-4" />
           </button>
+          <div className="w-[1px] h-4 bg-zinc-800" />
+          <button
+            type="button"
+            onClick={handleOpenConfig}
+            className={`min-h-11 min-w-11 p-3 transition-colors duration-200 relative flex items-center justify-center ${isConfigOpen || mapProvider === 'mapbox' ? 'bg-zinc-800 text-blue-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
+            title="Configuration Cartographie & Mapbox"
+          >
+            <Sliders className="w-4 h-4" />
+            {mapProvider === 'mapbox' && mapboxToken.trim() && (
+              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-zinc-900" />
+            )}
+          </button>
         </div>
       </div>
+
+      {/* Modal interactif de configuration Cartographie & Mapbox */}
+      <AnimatePresence>
+        {isConfigOpen && (
+          <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm pointer-events-auto">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              className="bg-zinc-900 border border-zinc-700/70 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col pointer-events-auto"
+            >
+              {/* En-tête du panneau modal */}
+              <div className="flex items-center justify-between px-5 py-4 border-b border-zinc-800 bg-zinc-900/90">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 rounded-lg bg-blue-500/10 border border-blue-500/20 text-blue-400">
+                    <Sliders className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold text-zinc-100 uppercase tracking-wider">Configuration Cartographie</h3>
+                    <p className="text-xs text-zinc-400">Sélection du fournisseur et des styles vectoriels</p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsConfigOpen(false)}
+                  className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Contenu paramétrable */}
+              <div className="p-5 space-y-4 max-h-[75vh] overflow-y-auto">
+                {/* Sélecteur de fournisseur */}
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold uppercase tracking-wider text-zinc-300">Fournisseur de Fond de Carte</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setProviderInput('free')}
+                      className={`p-3 rounded-lg border text-left transition-all ${providerInput === 'free' ? 'border-blue-500/60 bg-blue-500/10 text-white shadow-sm' : 'border-zinc-800 bg-zinc-950/60 text-zinc-400 hover:border-zinc-700'}`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium">Fonds Libres (Gratuit)</span>
+                        {providerInput === 'free' && <Check className="w-3.5 h-3.5 text-blue-400" />}
+                      </div>
+                      <p className="text-[11px] text-zinc-400">CARTO & ESRI, sans clé API, zéro frais.</p>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => setProviderInput('mapbox')}
+                      className={`p-3 rounded-lg border text-left transition-all ${providerInput === 'mapbox' ? 'border-blue-500/60 bg-blue-500/10 text-white shadow-sm' : 'border-zinc-800 bg-zinc-950/60 text-zinc-400 hover:border-zinc-700'}`}
+                    >
+                      <div className="flex items-center justify-between mb-1">
+                        <span className="text-xs font-medium">Mapbox HD Vectoriel</span>
+                        {providerInput === 'mapbox' && <Check className="w-3.5 h-3.5 text-blue-400" />}
+                      </div>
+                      <p className="text-[11px] text-zinc-400">Styles vectoriels Dark v11, Streets, Satellite.</p>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Paramétrage spécifique Mapbox */}
+                {providerInput === 'mapbox' && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="space-y-3.5 pt-1"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-xs font-medium text-zinc-300 flex items-center gap-1.5">
+                          <Key className="w-3.5 h-3.5 text-blue-400" />
+                          Mapbox Access Token (public)
+                        </label>
+                        {mapboxToken && (
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950/70 border border-emerald-700/50 text-emerald-400 font-mono">
+                            Token actif
+                          </span>
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        value={tokenInput}
+                        onChange={(e) => setTokenInput(e.target.value)}
+                        placeholder="pk.eyJ1..."
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500 font-mono"
+                      />
+                      <p className="text-[11px] text-zinc-500 mt-1">
+                        Vous pouvez aussi le renseigner de façon permanente via <code className="text-zinc-300 bg-zinc-800 px-1 py-0.5 rounded">VITE_MAPBOX_TOKEN</code> dans votre fichier <code className="text-zinc-300 bg-zinc-800 px-1 py-0.5 rounded">.env</code>.
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-medium text-zinc-300 block mb-1.5">
+                        Style Mapbox personnalisé (optionnel)
+                      </label>
+                      <input
+                        type="text"
+                        value={customStyleInput}
+                        onChange={(e) => setCustomStyleInput(e.target.value)}
+                        placeholder="mapbox://styles/username/style-id"
+                        className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-blue-500 font-mono"
+                      />
+                      <p className="text-[11px] text-zinc-500 mt-1">
+                        Laissez vide pour utiliser les styles officiels Mapbox (Dark v11 en Nuit, Light v11 en Jour, Satellite Streets en Satellite).
+                      </p>
+                    </div>
+                  </motion.div>
+                )}
+
+                {/* Message d'état et feedback */}
+                {configFeedback && (
+                  <div className="p-2.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs flex items-center gap-2">
+                    <Check className="w-4 h-4 flex-shrink-0" />
+                    <span>{configFeedback}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Pied de panneau avec actions de sauvegarde */}
+              <div className="flex items-center justify-between px-5 py-3.5 border-t border-zinc-800 bg-zinc-900/60">
+                <button
+                  type="button"
+                  onClick={handleResetToFree}
+                  className="px-3 py-1.5 text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors flex items-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Réinitialiser
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsConfigOpen(false)}
+                    className="px-3.5 py-1.5 text-xs text-zinc-300 hover:text-zinc-100 hover:bg-zinc-800 rounded-lg transition-colors"
+                  >
+                    Fermer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSaveConfig}
+                    className="px-4 py-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg shadow-sm transition-colors flex items-center gap-1.5"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                    Appliquer
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
