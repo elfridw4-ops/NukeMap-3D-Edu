@@ -12,13 +12,12 @@
     "test": "node ./node_modules/vitest/vitest.mjs run"
   },
   "dependencies": {
-    "@google/genai": "^1.29.0",
+    "@deck.gl/layers": "^9.4.0",
+    "@deck.gl/react": "^9.4.0",
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.1.1",
     "clsx": "^2.1.1",
     "deck.gl": "^9.4.0",
-    "dotenv": "^17.2.3",
-    "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "maplibre-gl": "^6.7.0",
     "motion": "^12.23.24",
@@ -28,11 +27,8 @@
     "tailwind-merge": "^3.6.0"
   },
   "devDependencies": {
-    "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",
-    "autoprefixer": "^10.4.21",
     "tailwindcss": "^4.3.3",
-    "tsx": "^4.21.0",
     "typescript": "~5.8.2",
     "vite": "^8.2.2",
     "vitest": "^5.0.0"

@@ -1,9 +1,9 @@
 import React, { useMemo, useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'motion/react';
 import Map, { NavigationControl } from 'react-map-gl/maplibre';
 import * as maplibregl from 'maplibre-gl';
 import DeckGL from '@deck.gl/react';
-import { ScatterplotLayer, PolygonLayer, PointCloudLayer, PathLayer } from '@deck.gl/layers';
+import { ScatterplotLayer, PolygonLayer, PointCloudLayer, PathLayer } from 'deck.gl';
 import { Sun, Moon, Globe, Sliders, Check, RotateCcw, Key, X, AlertCircle } from 'lucide-react';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { BlastRadii, EnvironmentParams, PastStrike } from '../types';
@@ -441,18 +441,14 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
   const [mapProvider, setMapProvider] = useState<MapProvider>(() => {
     const saved = localStorage.getItem('nukemap_map_provider');
     if (saved === 'mapbox' || saved === 'free') return saved;
-    const envToken = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MAPBOX_TOKEN) ||
-      (typeof process !== 'undefined' && (process.env as any)?.VITE_MAPBOX_TOKEN);
+    const envToken = import.meta.env.VITE_MAPBOX_TOKEN ?? '';
     const localToken = localStorage.getItem('nukemap_mapbox_token');
     return ((localToken && localToken.trim().length > 0) || (envToken && envToken.trim().length > 0)) ? 'mapbox' : 'free';
   });
 
   // Jeton Mapbox : vérifie d'abord le stockage local de l'utilisateur puis la variable d'environnement
   const [mapboxToken, setMapboxToken] = useState<string>(() => {
-    return localStorage.getItem('nukemap_mapbox_token') ||
-      (typeof import.meta !== 'undefined' && import.meta.env?.VITE_MAPBOX_TOKEN) ||
-      (typeof process !== 'undefined' && (process.env as any)?.VITE_MAPBOX_TOKEN) ||
-      '';
+    return localStorage.getItem('nukemap_mapbox_token') || import.meta.env.VITE_MAPBOX_TOKEN || '';
   });
 
   // URL de style personnalisé Mapbox optionnelle (ex: mapbox://styles/user/style-id)
