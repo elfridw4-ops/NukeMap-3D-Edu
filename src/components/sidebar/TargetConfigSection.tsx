@@ -1,13 +1,13 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LaunchParams, EnvironmentParams, BlastRadii, WeaponConfig, DeliveryType } from '../../types';
-import { WEAPON_PRESETS, haversineKm, flightTimeMin } from '../../lib/nuclearMath';
+import { WEAPON_PRESETS, haversineKm, flightTimeMin, resolveVectorFlightProfile } from '../../lib/nuclearMath';
 import { CITIES_DATABASE, findNearbyCity } from '../../lib/citiesData';
 import { AutomaticGeoData } from '../../lib/geoDataFetcher';
 import { VECTORS } from './constants';
 import {
   Navigation, Crosshair, MapPin, Rocket, Search, Sparkles, ChevronUp, ChevronDown,
-  ShieldAlert, Building2, School, AlertTriangle
+  ShieldAlert, Building2, School, AlertTriangle, X
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -41,6 +41,8 @@ export interface TargetConfigSectionProps {
   pastStrikesCount: number;
   onClearPastStrikes: () => void;
   setWeapon: (weapon: WeaponConfig) => void;
+  ballisticError?: string | null;
+  onClearBallisticError?: () => void;
 }
 
 export function TargetConfigSection({
@@ -65,7 +67,9 @@ export function TargetConfigSection({
   setMultiStrikeMode,
   pastStrikesCount,
   onClearPastStrikes,
-  setWeapon
+  setWeapon,
+  ballisticError,
+  onClearBallisticError
 }: TargetConfigSectionProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -76,8 +80,9 @@ export function TargetConfigSection({
   const sidebarDistanceKm = origin && target 
     ? haversineKm(origin.lat, origin.lng, target.lat, target.lng) 
     : 0;
+  const flightProfile = resolveVectorFlightProfile(launchParams);
   const sidebarSelectedVec = VECTORS.find(v => v.id === (launchParams.vectorId || 'icbm')) || VECTORS[0];
-  const buttonOutOfRange = sidebarDistanceKm > sidebarSelectedVec.rangeKm;
+  const buttonOutOfRange = sidebarDistanceKm > flightProfile.maxRangeKm;
 
   const handleSearch = async () => {
     if (!searchQuery) return;
@@ -160,9 +165,11 @@ export function TargetConfigSection({
           )}
           <button 
             type="button"
+            aria-label="Activer ou désactiver la frappe multiple"
+            aria-pressed={multiStrikeMode}
             onClick={() => setMultiStrikeMode(!multiStrikeMode)}
             className={cn(
-              "w-11 h-11 rounded-full relative transition-colors focus:outline-none focus:ring-2 focus:ring-sky-900",
+              "w-11 h-11 rounded-full relative transition-colors focus:outline-none focus:ring-2 focus:ring-sky-900 cursor-pointer shrink-0",
               multiStrikeMode ? "bg-sky-600 border border-sky-500" : "bg-zinc-800 border border-zinc-700"
             )}
           >
@@ -269,17 +276,11 @@ export function TargetConfigSection({
 
                 {/* DYNAMIC CALCULATIONS RESULT PANEL */}
                 {(() => {
-                  const distanceKm = origin && target 
-                    ? haversineKm(origin.lat, origin.lng, target.lat, target.lng) 
-                    : 0;
-
-                  const selectedVec = VECTORS.find(v => v.id === (launchParams.vectorId || 'icbm')) || VECTORS[0];
-                  const activeRange = launchParams.customRangeKm !== undefined ? launchParams.customRangeKm : selectedVec.rangeKm;
-                  
-                  let activeSpeed = launchParams.customSpeedKmh !== undefined ? launchParams.customSpeedKmh : (selectedVec.speedKmh || 24000);
-                  if (launchParams.trajectoryType === 'depressed') {
-                    activeSpeed = activeSpeed * 1.33;
-                  }
+                  const distanceKm = sidebarDistanceKm;
+                  const selectedVec = sidebarSelectedVec;
+                  const activeRange = flightProfile.maxRangeKm;
+                  const activeSpeed = flightProfile.speedKmh;
+                  const activeAltitudeKm = flightProfile.altitudeKm;
 
                   const isOutOfRange = distanceKm > activeRange;
                   const flightDurationMin = distanceKm > 0 ? flightTimeMin(distanceKm, activeSpeed) : 0;
@@ -309,35 +310,36 @@ export function TargetConfigSection({
                   const activePhaseName = selectedVec.phases[activePhaseIndex];
 
                   const simulatedAlt = flightProgress > 0 && flightProgress < 1
-                    ? Math.round(4 * (launchParams.altitudeKm !== undefined ? launchParams.altitudeKm : (selectedVec.altitudeKm || 1200)) * flightProgress * (1 - flightProgress))
+                    ? Math.round(4 * activeAltitudeKm * flightProgress * (1 - flightProgress))
                     : 0;
 
                   return (
                     <div className="space-y-3.5 mt-2 animate-fadeIn">
                       
                       {/* CHARACTERISTICS CUSTOMIZATION PANEL */}
-                      <div className="p-3 bg-zinc-950/60 border border-zinc-900/60 rounded-xl space-y-3">
-                        <div className="flex items-center justify-between border-b border-zinc-900/40 pb-1.5">
+                      <div className="p-3 bg-zinc-950/60 border border-zinc-800/80 rounded-xl space-y-3">
+                        <div className="flex items-center justify-between border-b border-zinc-800/60 pb-1.5">
                           <span className="text-[10px] text-zinc-400 font-bold uppercase tracking-wider flex items-center gap-1.5">
-                            <Sparkles className="w-3.5 h-3.5 text-red-400 animate-pulse" />
-                            Ajustement du Vecteur (Accès Physique)
+                            <Sparkles className="w-3.5 h-3.5 text-red-400" />
+                            Ajustement du Vecteur
                           </span>
-                          <span className="text-[9px] text-zinc-500 font-mono">
+                          <span className="text-[9px] text-zinc-400 font-mono tabular-nums">
                             Mach {(activeSpeed / 1225).toFixed(1)}
                           </span>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
                           <div className="space-y-1">
-                            <label className="text-[9px] text-zinc-500 uppercase tracking-wider font-semibold">Vitesse (km/h)</label>
+                            <label htmlFor="vector-speed-input" className="text-[9px] text-zinc-400 uppercase tracking-wider font-semibold block">Vitesse (km/h)</label>
                             <input 
+                              id="vector-speed-input"
                               type="number" 
                               min="100"
                               max="150000"
-                              className="w-full bg-zinc-950 border border-zinc-850 rounded-lg p-2 font-mono text-[11px] text-zinc-200 outline-none focus:ring-1 focus:ring-red-500 shadow-inner"
+                              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 font-mono tabular-nums text-[11px] text-zinc-200 outline-none focus:ring-1 focus:ring-red-500 shadow-inner"
                               value={launchParams.customSpeedKmh !== undefined ? launchParams.customSpeedKmh : (selectedVec.speedKmh || 24000)}
                               onChange={(e) => {
-                                const val = parseInt(e.target.value) || 0;
+                                const val = parseInt(e.target.value, 10) || 100;
                                 setLaunchParams({
                                   ...launchParams,
                                   customSpeedKmh: val,
@@ -349,17 +351,18 @@ export function TargetConfigSection({
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[9px] text-zinc-500 uppercase tracking-wider font-semibold">Apogée (Altitude, km)</label>
+                            <label htmlFor="vector-apogee-input" className="text-[9px] text-zinc-400 uppercase tracking-wider font-semibold block">Apogée (km)</label>
                             <input 
+                              id="vector-apogee-input"
                               type="number" 
                               min="0"
                               max="5000"
-                              className="w-full bg-zinc-950 border border-zinc-850 rounded-lg p-2 font-mono text-[11px] text-zinc-200 outline-none focus:ring-1 focus:ring-red-500 shadow-inner"
+                              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 font-mono tabular-nums text-[11px] text-zinc-200 outline-none focus:ring-1 focus:ring-red-500 shadow-inner"
                               value={launchParams.altitudeKm !== undefined ? launchParams.altitudeKm : (selectedVec.altitudeKm || 1200)}
                               onChange={(e) => {
                                 setLaunchParams({
                                   ...launchParams,
-                                  altitudeKm: parseInt(e.target.value) || 0
+                                  altitudeKm: parseInt(e.target.value, 10) || 0
                                 });
                               }}
                               placeholder="Ex: 1200"
@@ -369,17 +372,18 @@ export function TargetConfigSection({
 
                         <div className="grid grid-cols-2 gap-3">
                           <div className="space-y-1">
-                            <label className="text-[9px] text-zinc-500 uppercase tracking-wider font-semibold">Portée Max (km)</label>
+                            <label htmlFor="vector-range-input" className="text-[9px] text-zinc-400 uppercase tracking-wider font-semibold block">Portée Max (km)</label>
                             <input 
+                              id="vector-range-input"
                               type="number" 
                               min="10"
                               max="150000"
-                              className="w-full bg-zinc-950 border border-zinc-850 rounded-lg p-2 font-mono text-[11px] text-zinc-200 outline-none focus:ring-1 focus:ring-red-500 shadow-inner"
+                              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 font-mono tabular-nums text-[11px] text-zinc-200 outline-none focus:ring-1 focus:ring-red-500 shadow-inner"
                               value={launchParams.customRangeKm !== undefined ? launchParams.customRangeKm : selectedVec.rangeKm}
                               onChange={(e) => {
                                 setLaunchParams({
                                   ...launchParams,
-                                  customRangeKm: parseInt(e.target.value) || 0
+                                  customRangeKm: parseInt(e.target.value, 10) || 10
                                 });
                               }}
                               placeholder="Ex: 13000"
@@ -387,9 +391,10 @@ export function TargetConfigSection({
                           </div>
 
                           <div className="space-y-1">
-                            <label className="text-[9px] text-zinc-500 uppercase tracking-wider font-semibold">Profil Trajectoire</label>
+                            <label htmlFor="vector-trajectory-select" className="text-[9px] text-zinc-400 uppercase tracking-wider font-semibold block">Profil Trajectoire</label>
                             <select 
-                              className="w-full bg-zinc-950 border border-zinc-850 rounded-lg p-1.5 text-[10px] text-zinc-200 outline-none focus:ring-1 focus:ring-red-500"
+                              id="vector-trajectory-select"
+                              className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 text-[10px] text-zinc-200 outline-none focus:ring-1 focus:ring-red-500"
                               value={launchParams.trajectoryType || 'standard'}
                               onChange={(e) => {
                                 const type = e.target.value as 'standard' | 'depressed' | 'cruise';
@@ -417,41 +422,41 @@ export function TargetConfigSection({
                       </div>
 
                       {/* Calculation card */}
-                      <div className="p-3 bg-zinc-950/80 border border-zinc-900/80 rounded-lg space-y-2.5 font-mono text-[11px] leading-relaxed shadow-inner">
-                        <div className="flex justify-between items-center text-zinc-500 border-b border-zinc-900/50 pb-1">
+                      <div className="p-3 bg-zinc-950/80 border border-zinc-800/80 rounded-lg space-y-2.5 font-mono text-[11px] leading-relaxed shadow-inner tabular-nums">
+                        <div className="flex justify-between items-center text-zinc-400 border-b border-zinc-800/60 pb-1">
                           <span className="uppercase text-[9px] font-bold tracking-wider">Planification</span>
                           <span className="uppercase text-[9px] font-bold tracking-wider">État</span>
                         </div>
                         <div className="flex justify-between items-center">
-                          <span className="text-zinc-500">Distance :</span>
-                          <span className="text-zinc-200 font-semibold">{distanceKm > 0 ? `${Math.round(distanceKm).toLocaleString()} km` : "N/A"}</span>
+                          <span className="text-zinc-400">Distance :</span>
+                          <span className="text-zinc-200 font-semibold">{distanceKm > 0 ? `${Math.round(distanceKm).toLocaleString('fr-FR')} km` : "N/A"}</span>
                         </div>
                         <div className="flex justify-between items-center">
-                          <span className="text-zinc-500">Temps de vol :</span>
+                          <span className="text-zinc-400">Temps de vol :</span>
                           <span className="text-blue-400 font-semibold">{distanceKm > 0 ? formatDuration(flightDurationMin) : "N/A"}</span>
                         </div>
                         <div className="flex justify-between items-center text-zinc-400">
-                          <span className="text-zinc-500">Vecteur :</span>
+                          <span className="text-zinc-400">Vecteur :</span>
                           <span className="text-zinc-200 text-right text-[10px] truncate max-w-[130px]">{selectedVec.name}</span>
                         </div>
                         <div className="flex justify-between items-center">
-                          <span className="text-zinc-500">Portée Max :</span>
-                          <span className={cn("font-bold flex items-center gap-1", isOutOfRange ? "text-red-500" : "text-emerald-500")}>
-                            {activeRange >= 90000 ? "Illimitée" : `${activeRange.toLocaleString()} km`}
+                          <span className="text-zinc-400">Portée Max :</span>
+                          <span className={cn("font-bold flex items-center gap-1", isOutOfRange ? "text-red-400" : "text-emerald-400")}>
+                            {activeRange >= 90000 ? "Illimitée" : `${activeRange.toLocaleString('fr-FR')} km`}
                             <span>{isOutOfRange ? "❌" : "✅"}</span>
                           </span>
                         </div>
                         
                         {isOutOfRange && (
-                          <div className="p-2 bg-red-950/20 border border-red-900/40 text-red-400 text-[10px] rounded-md mt-1 leading-normal font-sans">
-                            <strong>⚠️ Hors de portée !</strong> Distance supérieure à la limite opérationnelle du vecteur.
+                          <div role="alert" className="p-2 bg-red-950/30 border border-red-900/50 text-red-300 text-[10px] rounded-md mt-1 leading-normal font-sans">
+                            <strong>Hors de portée :</strong> Distance supérieure à la limite opérationnelle du vecteur.
                           </div>
                         )}
 
                         {distanceKm > 0 && flightDurationMin < 10 && (
-                          <div className="p-2 bg-red-950/40 border border-red-500/30 text-red-400 text-[10px] rounded-md font-sans animate-pulse flex items-center justify-center gap-1.5 leading-normal">
-                            <AlertTriangle className="w-3.5 h-3.5 text-red-500 shrink-0" />
-                            <span className="font-bold tracking-wide">⚠️ FENÊTRE DE RÉACTION CRITIQUE (&lt; 10 min)</span>
+                          <div className="p-2 bg-red-950/40 border border-red-500/30 text-red-300 text-[10px] rounded-md font-sans flex items-center justify-center gap-1.5 leading-normal">
+                            <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+                            <span className="font-bold tracking-wide">FENÊTRE DE RÉACTION CRITIQUE (&lt; 10 min)</span>
                           </div>
                         )}
                       </div>
@@ -529,24 +534,26 @@ export function TargetConfigSection({
 
       <div className="flex bg-zinc-900/50 border border-zinc-700/50 rounded-lg p-1 backdrop-blur-sm">
         <button
+          type="button"
           onClick={() => setSelectionMode('target')}
           className={cn(
-            "flex-1 py-1.5 text-xs font-medium rounded transition-colors flex items-center justify-center gap-2",
+            "flex-1 min-h-11 py-2 text-xs font-medium rounded transition-colors flex items-center justify-center gap-2 cursor-pointer",
             selectionMode === 'target' 
               ? "bg-zinc-800 text-white shadow-sm" 
-              : "text-zinc-500 hover:text-zinc-300"
+              : "text-zinc-400 hover:text-zinc-200"
           )}
         >
           <Crosshair className="w-3.5 h-3.5" />
           Cible
         </button>
         <button
+          type="button"
           onClick={() => setSelectionMode('origin')}
           className={cn(
-            "flex-1 py-1.5 text-xs font-medium rounded transition-colors flex items-center justify-center gap-2",
+            "flex-1 min-h-11 py-2 text-xs font-medium rounded transition-colors flex items-center justify-center gap-2 cursor-pointer",
             selectionMode === 'origin' 
-              ? "bg-blue-900/50 text-blue-400 shadow-sm border border-blue-800/50" 
-              : "text-zinc-500 hover:text-zinc-300"
+              ? "bg-blue-900/50 text-blue-300 shadow-sm border border-blue-800/50" 
+              : "text-zinc-400 hover:text-zinc-200"
           )}
         >
           <MapPin className="w-3.5 h-3.5" />
@@ -556,9 +563,12 @@ export function TargetConfigSection({
 
       {/* Sélection de cible historique / stratégique */}
       <div className="space-y-2 mt-3">
-        <label className="text-xs text-zinc-400 font-medium tracking-wide">Cibles historiques & stratégiques (Base Edu)</label>
+        <label htmlFor="historical-city-select" className="text-xs text-zinc-400 font-medium tracking-wide block">
+          Cibles historiques & stratégiques (Base Edu)
+        </label>
         <div className="relative">
           <select 
+            id="historical-city-select"
             className="w-full appearance-none bg-zinc-950 border border-zinc-800/80 rounded-lg p-2.5 pl-3 pr-10 text-xs outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500/50 transition-all shadow-inner text-zinc-200"
             value={nearbyCity?.id || ""}
             onChange={(e) => {
@@ -572,8 +582,8 @@ export function TargetConfigSection({
                   const parseAvg = (str: string, def: number) => {
                     const m = str.match(/\d+/g);
                     if (!m) return def;
-                    if (m.length > 1) return (parseInt(m[0]) + parseInt(m[1])) / 2;
-                    return parseInt(m[0]);
+                    if (m.length > 1) return (parseInt(m[0], 10) + parseInt(m[1], 10)) / 2;
+                    return parseInt(m[0], 10);
                   };
                   const parseDir = (str: string, def: number) => {
                     const lw = str.toLowerCase();
@@ -620,8 +630,8 @@ export function TargetConfigSection({
         </div>
       </div>
 
-      <div className="p-4 bg-zinc-900/30 border border-zinc-800/50 rounded-lg space-y-3 backdrop-blur-sm">
-        <p className="text-xs text-zinc-500 leading-relaxed font-sans">
+      <div className="p-4 bg-zinc-900/30 border border-zinc-800/60 rounded-lg space-y-3 backdrop-blur-sm">
+        <p className="text-xs text-zinc-400 leading-relaxed font-sans">
           Faites glisser la carte et cliquez n'importe où pour définir le point {selectionMode === 'target' ? "d'impact" : "d'origine"}. 
           {selectionMode === 'target' ? " Les zones de destruction seront instantanément calculées." : " Ce point servira de base de lancement."}
         </p>
@@ -630,8 +640,9 @@ export function TargetConfigSection({
           <div className="flex gap-2">
             <input 
               type="text" 
+              aria-label="Rechercher un lieu"
               placeholder="Rechercher un lieu..."
-              className="w-full bg-zinc-900/50 border border-zinc-700/50 rounded-lg px-3 py-2 text-xs outline-none focus:border-zinc-500 transition-colors"
+              className="w-full min-h-11 bg-zinc-900/60 border border-zinc-700/60 rounded-lg px-3 py-2 text-xs text-zinc-100 placeholder-zinc-400 outline-none focus:border-zinc-400 transition-colors"
               value={searchQuery}
               onChange={e => {
                 setSearchQuery(e.target.value);
@@ -641,15 +652,16 @@ export function TargetConfigSection({
             />
             <button 
               type="button"
+              aria-label="Lancer la recherche de lieu"
               onClick={handleSearch}
               disabled={isSearching}
-              className="bg-zinc-800/50 hover:bg-zinc-700 text-zinc-300 px-3 rounded-lg transition-colors flex items-center justify-center disabled:opacity-50 border border-zinc-700/50"
+              className="min-h-11 min-w-11 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-3 rounded-lg transition-colors flex items-center justify-center disabled:opacity-50 border border-zinc-700/60 cursor-pointer"
             >
-              <Search className="w-3.5 h-3.5" />
+              <Search className="w-4 h-4" />
             </button>
           </div>
           {searchError && (
-            <div className="text-[10px] text-red-500 font-mono flex items-center gap-1 mt-0.5 animate-pulse pl-1">
+            <div role="alert" className="text-[10px] text-red-400 font-mono flex items-center gap-1 mt-0.5 pl-1">
               <span>⚠️</span> {searchError}
             </div>
           )}
@@ -659,9 +671,28 @@ export function TargetConfigSection({
       {origin && target && (
         <div className="p-3 bg-zinc-900/30 border border-zinc-700/50 rounded-lg mt-3 flex justify-between items-center shadow-inner backdrop-blur-sm">
           <span className="text-[10px] text-zinc-400 font-semibold uppercase tracking-wider">Distance estimée</span>
-          <span className="text-sm text-blue-400 font-mono font-bold tracking-tight">
-            {Math.round(Math.sqrt((target.lng - origin.lng) ** 2 + (target.lat - origin.lat) ** 2) * 111.32)} <span className="text-xs text-blue-500/70">KM</span>
+          <span className="text-sm text-blue-400 font-mono tabular-nums font-bold tracking-tight">
+            {Math.round(sidebarDistanceKm).toLocaleString('fr-FR')} <span className="text-xs text-blue-400/80">KM</span>
           </span>
+        </div>
+      )}
+
+      {ballisticError && (
+        <div role="alert" className="p-2.5 bg-red-950/40 border border-red-800/60 text-red-200 text-[11px] rounded-lg flex items-start justify-between gap-2">
+          <div className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+            <span>{ballisticError}</span>
+          </div>
+          {onClearBallisticError && (
+            <button
+              type="button"
+              onClick={onClearBallisticError}
+              aria-label="Fermer l'alerte balistique"
+              className="text-red-300 hover:text-white p-0.5 cursor-pointer shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       )}
 
@@ -681,11 +712,11 @@ export function TargetConfigSection({
                     type="button"
                     onClick={onLaunchMissile}
                     disabled={(flightProgress > 0 && flightProgress < 1) || buttonOutOfRange}
-                    className="w-full relative overflow-hidden group bg-red-600 hover:bg-red-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white font-bold tracking-widest uppercase text-sm py-3 rounded-lg shadow-[0_0_20px_rgba(220,38,38,0.4)] disabled:shadow-none transition-all cursor-pointer"
+                    className="w-full min-h-11 relative overflow-hidden group bg-red-600 hover:bg-red-500 disabled:bg-zinc-800 disabled:text-zinc-400 text-white font-bold tracking-widest uppercase text-xs sm:text-sm py-3 rounded-lg shadow-[0_0_20px_rgba(220,38,38,0.4)] disabled:shadow-none transition-all cursor-pointer"
                   >
                     <span className="relative z-10 flex items-center justify-center gap-2">
                        <Rocket className={cn("w-4 h-4", flightProgress > 0 && flightProgress < 1 ? "animate-pulse" : "")} />
-                       {flightProgress > 0 && flightProgress < 1 ? "Séquence en cours..." : buttonOutOfRange ? "Cible hors de portée !" : "Lancer la Séquence"}
+                       {flightProgress > 0 && flightProgress < 1 ? "Séquence en cours..." : buttonOutOfRange ? "Cible hors de portée" : "Lancer la Séquence"}
                     </span>
                     {flightProgress > 0 && flightProgress < 1 && (
                       <div className="absolute left-0 bottom-0 h-1 bg-red-400" style={{ width: `${flightProgress * 100}%` }} />
@@ -695,7 +726,7 @@ export function TargetConfigSection({
                   <button
                     type="button"
                     onClick={onLaunchMissile}
-                    className="w-full relative overflow-hidden group bg-orange-600 hover:bg-orange-500 text-white font-bold tracking-widest uppercase text-sm py-3 rounded-lg shadow-[0_0_20px_rgba(249,115,22,0.4)] transition-all cursor-pointer"
+                    className="w-full min-h-11 relative overflow-hidden group bg-orange-600 hover:bg-orange-500 text-white font-bold tracking-widest uppercase text-xs sm:text-sm py-3 rounded-lg shadow-[0_0_20px_rgba(249,115,22,0.4)] transition-all cursor-pointer"
                   >
                     <span className="relative z-10 flex items-center justify-center gap-2">
                        <Sparkles className="w-4 h-4" />
@@ -707,7 +738,7 @@ export function TargetConfigSection({
                 <button
                   type="button"
                   onClick={onLaunchMissile}
-                  className="w-full relative overflow-hidden group bg-red-600 hover:bg-red-500 text-white font-bold tracking-widest uppercase text-sm py-3 rounded-lg shadow-[0_0_20px_rgba(220,38,38,0.4)] transition-all cursor-pointer"
+                  className="w-full min-h-11 relative overflow-hidden group bg-red-600 hover:bg-red-500 text-white font-bold tracking-widest uppercase text-xs sm:text-sm py-3 rounded-lg shadow-[0_0_20px_rgba(220,38,38,0.4)] transition-all cursor-pointer"
                 >
                   <span className="relative z-10 flex items-center justify-center gap-2">
                      <Sparkles className="w-4 h-4" />
@@ -727,21 +758,23 @@ export function TargetConfigSection({
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className="p-3.5 bg-zinc-950/80 border border-zinc-800/80 rounded-xl space-y-3.5 shadow-2xl text-xs text-zinc-350 backdrop-blur-md mt-4"
+            className="p-3.5 bg-zinc-950/80 border border-zinc-800/80 rounded-xl space-y-3.5 shadow-2xl text-xs text-zinc-300 backdrop-blur-md mt-4"
           >
-            <div 
-              className="flex items-center justify-between pb-1.5 border-b border-zinc-800/60 cursor-pointer select-none group"
+            <button
+              type="button"
+              aria-expanded={isTargetAnalysisExpanded}
+              className="w-full flex items-center justify-between pb-1.5 border-b border-zinc-800/60 cursor-pointer select-none group text-left"
               onClick={() => setIsTargetAnalysisExpanded(!isTargetAnalysisExpanded)}
             >
               <div className="flex items-center gap-1.5 font-bold text-red-400 uppercase tracking-widest text-[9.5px]">
-                <ShieldAlert className="w-3.5 h-3.5 text-red-500 animate-pulse shrink-0" />
+                <ShieldAlert className="w-3.5 h-3.5 text-red-500 shrink-0" />
                 Analyse de Cible Intégrée
-                <span className="text-[8px] text-zinc-500 font-normal normal-case ml-1 group-hover:text-zinc-300 transition-colors flex items-center gap-0.5">
-                  ({isTargetAnalysisExpanded ? "cliquer pour masquer" : "cliquer pour déplier"})
+                <span className="text-[8px] text-zinc-400 font-normal normal-case ml-1 group-hover:text-zinc-200 transition-colors">
+                  ({isTargetAnalysisExpanded ? "masquer" : "déplier"})
                 </span>
               </div>
               <div className="flex items-center gap-1.5">
-                <span className="text-[8px] font-mono font-bold bg-zinc-800/60 p-0.5 px-1.5 rounded border border-zinc-700/60 text-zinc-400">
+                <span className="text-[8px] font-mono tabular-nums font-bold bg-zinc-800/80 p-0.5 px-1.5 rounded border border-zinc-700/60 text-zinc-300">
                   [{target.lat.toFixed(4)}°, {target.lng.toFixed(4)}°]
                 </span>
                 {isTargetAnalysisExpanded ? (
@@ -750,12 +783,12 @@ export function TargetConfigSection({
                   <ChevronDown className="w-3.5 h-3.5 text-zinc-400 transition-transform duration-200" />
                 )}
               </div>
-            </div>
+            </button>
 
             <div className="space-y-1 text-zinc-300">
               <div className="font-sans text-xs font-bold text-zinc-100 flex items-center justify-between gap-1.5">
                 <span className="truncate">📍 {autoGeoData.cityName || "Zone d'Impact"}, {autoGeoData.countryName || "Eaux"}</span>
-                <span className="text-[7.5px] font-mono px-1.5 py-0.5 rounded bg-zinc-850 text-zinc-400 border border-zinc-800 capitalize shrink-0 leading-none">
+                <span className="text-[8px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 border border-zinc-700 capitalize shrink-0 leading-none">
                   {autoGeoData.placeType}
                 </span>
               </div>
@@ -831,7 +864,7 @@ export function TargetConfigSection({
 
                             return (
                               <div key={i} className="flex-1 flex flex-col items-center">
-                                <div className="w-full bg-zinc-850 rounded-sm h-5 flex items-end overflow-hidden border border-zinc-800/50">
+                                <div className="w-full bg-zinc-900 rounded-sm h-5 flex items-end overflow-hidden border border-zinc-800/60">
                                   <div 
                                     className={cn(
                                       "w-full transition-all duration-300",
@@ -840,7 +873,7 @@ export function TargetConfigSection({
                                     style={{ height: `${h}px` }}
                                   />
                                 </div>
-                                <span className="text-[6px] font-mono text-zinc-500 uppercase mt-0.5 tracking-tighter truncate max-w-[28px]">
+                                <span className="text-[6px] font-mono text-zinc-400 uppercase mt-0.5 tracking-tighter truncate max-w-[28px]">
                                   {pt.direction.split(' ')[0]}
                                 </span>
                               </div>
@@ -856,28 +889,28 @@ export function TargetConfigSection({
                     <div className="p-2.5 bg-zinc-900/40 border border-zinc-800/60 rounded flex flex-col gap-2">
                       <div className="flex items-center justify-between">
                         <span className="text-[8.5px] text-zinc-400 font-bold uppercase tracking-wider block">🏢 Équipements de Crise (Rayon 3km)</span>
-                        <span className="text-[7.5px] font-mono text-zinc-500">
+                        <span className="text-[7.5px] font-mono text-zinc-400">
                           {autoGeoData.infrastructureDetected ? "OSM Scanner v3" : "Estimations Statistiques"}
                         </span>
                       </div>
 
                       <div className="grid grid-cols-3 gap-1.5 pt-0.5">
-                        <div className="bg-zinc-950/45 border border-zinc-850 p-2 rounded flex flex-col items-center justify-center text-center">
-                          <Building2 className={cn("w-3.5 h-3.5 mb-1", autoGeoData.hospitals > 0 ? "text-red-400" : "text-zinc-600")} />
-                          <span className="font-mono text-xs font-bold text-white">{autoGeoData.hospitals}</span>
-                          <span className="text-[7.5px] text-zinc-500 leading-tight mt-0.5">Hôpitaux / Cliniques</span>
+                        <div className="bg-zinc-950/60 border border-zinc-800 p-2 rounded flex flex-col items-center justify-center text-center">
+                          <Building2 className={cn("w-3.5 h-3.5 mb-1", autoGeoData.hospitals > 0 ? "text-red-400" : "text-zinc-500")} />
+                          <span className="font-mono tabular-nums text-xs font-bold text-white">{autoGeoData.hospitals}</span>
+                          <span className="text-[7.5px] text-zinc-400 leading-tight mt-0.5">Hôpitaux / Cliniques</span>
                         </div>
 
-                        <div className="bg-zinc-950/45 border border-zinc-850 p-2 rounded flex flex-col items-center justify-center text-center">
-                          <School className={cn("w-3.5 h-3.5 mb-1", autoGeoData.schools > 0 ? "text-amber-400" : "text-zinc-600")} />
-                          <span className="font-mono text-xs font-bold text-white">{autoGeoData.schools}</span>
-                          <span className="text-[7.5px] text-zinc-500 leading-tight mt-0.5">Écoles / Univs</span>
+                        <div className="bg-zinc-950/60 border border-zinc-800 p-2 rounded flex flex-col items-center justify-center text-center">
+                          <School className={cn("w-3.5 h-3.5 mb-1", autoGeoData.schools > 0 ? "text-amber-400" : "text-zinc-500")} />
+                          <span className="font-mono tabular-nums text-xs font-bold text-white">{autoGeoData.schools}</span>
+                          <span className="text-[7.5px] text-zinc-400 leading-tight mt-0.5">Écoles / Univs</span>
                         </div>
 
-                        <div className="bg-zinc-950/45 border border-zinc-850 p-2 rounded flex flex-col items-center justify-center text-center">
-                          <Building2 className={cn("w-3.5 h-3.5 mb-1", autoGeoData.industrialZones > 0 ? "text-purple-400" : "text-zinc-600")} />
-                          <span className="font-mono text-xs font-bold text-white">{autoGeoData.industrialZones}</span>
-                          <span className="text-[7.5px] text-zinc-500 leading-tight mt-0.5">Zones Ind.</span>
+                        <div className="bg-zinc-950/60 border border-zinc-800 p-2 rounded flex flex-col items-center justify-center text-center">
+                          <Building2 className={cn("w-3.5 h-3.5 mb-1", autoGeoData.industrialZones > 0 ? "text-purple-400" : "text-zinc-500")} />
+                          <span className="font-mono tabular-nums text-xs font-bold text-white">{autoGeoData.industrialZones}</span>
+                          <span className="text-[7.5px] text-zinc-400 leading-tight mt-0.5">Zones Ind.</span>
                         </div>
                       </div>
 

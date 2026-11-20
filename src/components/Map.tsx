@@ -2,12 +2,23 @@ import React, { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import Map, { NavigationControl } from 'react-map-gl/maplibre';
 import * as maplibregl from 'maplibre-gl';
+import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
+
+// Configure MapLibre worker URL directly via official API using Vite-bundled local worker
+if (typeof window !== 'undefined' && typeof maplibregl.setWorkerUrl === 'function') {
+  maplibregl.setWorkerUrl(maplibreWorkerUrl);
+}
+
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer, PolygonLayer, PointCloudLayer, PathLayer } from 'deck.gl';
-import { Sun, Moon, Globe, Sliders, Check, RotateCcw, Key, X, AlertCircle } from 'lucide-react';
+import { Sun, Moon, Globe, Sliders, Check, RotateCcw, Key, X, AlertCircle, LayoutDashboard } from 'lucide-react';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { BlastRadii, EnvironmentParams, PastStrike } from '../types';
-import { calculateTsunamiMetrics, haversineKm, flightTimeMin, TsunamiMetrics } from '../lib/nuclearMath';
+import {
+  TsunamiMetrics,
+  resolveVectorFlightProfile,
+  calculateFalloutPlumeLengthKm,
+} from '../lib/nuclearMath';
 
 interface MapViewProps {
   pastStrikes: PastStrike[];
@@ -35,6 +46,7 @@ interface MapViewProps {
   isDetonationPaused: boolean;
   multiStrikeMode: boolean;
   tsunamiMetrics: TsunamiMetrics;
+  onReturnToPortal?: () => void;
 }
 
 // Helper pour calculer une coordonnée de destination
@@ -94,7 +106,7 @@ function calculateActiveFalloutDebris(
 ) {
   if (detonationTimeMs < 5000 || environmentParams.explosionType !== 'surface') return [];
   const deltaT = (detonationTimeMs - 5000) / 5000; 
-  const falloutLengthKm = Math.max(0.1, Math.pow(heavyBlastRadius / 1000, 1.2) * (Math.max(1, environmentParams.windSpeed) / 10 + 1) * 3);
+  const falloutLengthKm = calculateFalloutPlumeLengthKm(heavyBlastRadius, environmentParams.windSpeed);
   const direction = environmentParams.windDirection;
 
   return falloutDriftParticles.map(p => {
@@ -283,58 +295,10 @@ const MAPBOX_STYLES: Record<MapMode, string> = {
   satellite: 'mapbox://styles/mapbox/satellite-streets-v12'
 };
 
-// Styles raster libres de droits sans clé API requise (CARTO Dark, CARTO Light, ESRI World Imagery)
+// Styles vectoriels libres (OpenFreeMap Dark/Positron) et satellite raster libre (ESRI World Imagery) sans clé API requise
 const FREE_MAP_STYLES: Record<MapMode, any> = {
-  night: {
-    version: 8,
-    sources: {
-      'carto-dark': {
-        type: 'raster',
-        tiles: [
-          "https://a.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-          "https://b.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-          "https://c.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png",
-          "https://d.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png"
-        ],
-        tileSize: 256,
-        attribution: '&copy; OpenStreetMap contributors, &copy; CARTO'
-      }
-    },
-    layers: [
-      {
-        id: 'carto-dark-layer',
-        type: 'raster',
-        source: 'carto-dark',
-        minzoom: 0,
-        maxzoom: 22
-      }
-    ]
-  },
-  day: {
-    version: 8,
-    sources: {
-      'carto-light': {
-        type: 'raster',
-        tiles: [
-          "https://a.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
-          "https://b.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
-          "https://c.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png",
-          "https://d.basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png"
-        ],
-        tileSize: 256,
-        attribution: '&copy; OpenStreetMap contributors, &copy; CARTO'
-      }
-    },
-    layers: [
-      {
-        id: 'carto-light-layer',
-        type: 'raster',
-        source: 'carto-light',
-        minzoom: 0,
-        maxzoom: 22
-      }
-    ]
-  },
+  night: 'https://tiles.openfreemap.org/styles/dark',
+  day: 'https://tiles.openfreemap.org/styles/positron',
   satellite: {
     version: 8,
     sources: {
@@ -429,7 +393,7 @@ export function transformMapboxUrl(url: string, resourceType: string, token: str
   return { url };
 }
 
-export function MapView({ pastStrikes, target, origin, radii, environmentParams, effectiveYield, onMapClick, viewState, setViewState, simulationMode, flightProgress, launchParams, targetDetails, detonationTimeMs, isDetonationAnimating, isDetonationPaused, multiStrikeMode, tsunamiMetrics }: MapViewProps) {
+export function MapView({ pastStrikes, target, origin, radii, environmentParams, effectiveYield, onMapClick, viewState, setViewState, simulationMode, flightProgress, launchParams, targetDetails, detonationTimeMs, isDetonationAnimating, isDetonationPaused, multiStrikeMode, tsunamiMetrics, onReturnToPortal }: MapViewProps) {
   
   // Mode de rendu visuel de la carte (Nuit, Jour, Satellite)
   const [mapMode, setMapMode] = useState<MapMode>(() => {
@@ -437,13 +401,11 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
     return (saved as MapMode) || 'night';
   });
 
-  // Fournisseur cartographique actif : 'mapbox' pour vectoriel HD, 'free' pour raster CARTO/ESRI
+  // Fournisseur cartographique actif : 'free' (CARTO/ESRI) par défaut pour garantir une compatibilité native MapLibre, 'mapbox' uniquement sur choix explicite
   const [mapProvider, setMapProvider] = useState<MapProvider>(() => {
     const saved = localStorage.getItem('nukemap_map_provider');
     if (saved === 'mapbox' || saved === 'free') return saved;
-    const envToken = import.meta.env.VITE_MAPBOX_TOKEN ?? '';
-    const localToken = localStorage.getItem('nukemap_mapbox_token');
-    return ((localToken && localToken.trim().length > 0) || (envToken && envToken.trim().length > 0)) ? 'mapbox' : 'free';
+    return 'free';
   });
 
   // Jeton Mapbox : vérifie d'abord le stockage local de l'utilisateur puis la variable d'environnement
@@ -462,6 +424,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
   const [customStyleInput, setCustomStyleInput] = useState(customStyleUrl);
   const [providerInput, setProviderInput] = useState<MapProvider>(mapProvider);
   const [configFeedback, setConfigFeedback] = useState<string | null>(null);
+  const [mapErrorMsg, setMapErrorMsg] = useState<string | null>(null);
 
   // Synchronisation de l'affichage du mode jour/nuit/satellite dans le localStorage
   useEffect(() => {
@@ -506,7 +469,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
     }, 1000);
   };
 
-  // Réinitialisation vers le fournisseur gratuit (CARTO & ESRI)
+  // Réinitialisation vers le fournisseur gratuit (OpenFreeMap & ESRI)
   const handleResetToFree = () => {
     setTokenInput('');
     setCustomStyleInput('');
@@ -611,15 +574,19 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
     return 0;
   }, [currentBlastWaveRadius, radii]);
 
-  // Memoized Fireball Flying Debris Particles (random seed arrays)
+  // Deterministic Fireball Flying Debris Particles (consistent across renders/reloads)
   const fireballDebrisParticles = useMemo(() => {
     const particles = [];
     const numDebris = 60;
     for (let i = 0; i < numDebris; i++) {
-      const angle = Math.random() * Math.PI * 2;
-      const speedFactor = 0.5 + Math.random() * 2.5; 
-      const size = 2 + Math.random() * 5;
-      const randomSeed = Math.random();
+      const r1 = Math.abs(Math.sin(i * 12.9898 + 1.23) * 43758.5453) % 1;
+      const r2 = Math.abs(Math.sin(i * 78.233 + 4.56) * 23145.1235) % 1;
+      const r3 = Math.abs(Math.sin(i * 45.164 + 7.89) * 63984.7121) % 1;
+      const r4 = Math.abs(Math.sin(i * 93.989 + 2.34) * 81231.5432) % 1;
+      const angle = r1 * Math.PI * 2;
+      const speedFactor = 0.5 + r2 * 2.5;
+      const size = 2 + r3 * 5;
+      const randomSeed = r4;
       particles.push({ angle, speedFactor, size, randomSeed });
     }
     return particles;
@@ -736,15 +703,9 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
 
     // Generate ballistic trajectories for all active strikes simultaneously if in ballistic mode
     if (simulationMode === 'ballistic' && origin && activeStrikes.length > 0) {
-      const vectorId = launchParams.vectorId || 'icbm';
-      let altitudeKm = 1200;
-      let vectorColorHex = "#ef4444";
-      if (vectorId === 'icbm') { altitudeKm = 1200; vectorColorHex = "#ef4444"; }
-      else if (vectorId === 'slbm') { altitudeKm = 1300; vectorColorHex = "#f97316"; }
-      else if (vectorId === 'bomber') { altitudeKm = 15; vectorColorHex = "#6366f1"; }
-      else if (vectorId === 'cruise') { altitudeKm = 0.1; vectorColorHex = "#8b5cf6"; }
-      else if (vectorId === 'houthi') { altitudeKm = 12; vectorColorHex = "#ec4899"; }
-      else if (vectorId === 'custom') { altitudeKm = launchParams.altitudeKm || 100; vectorColorHex = "#22c55e"; }
+      const profile = resolveVectorFlightProfile(launchParams);
+      const altitudeKm = profile.altitudeKm;
+      const vectorColorHex = profile.colorHex;
 
       const vr = parseInt(vectorColorHex.slice(1, 3), 16);
       const vg = parseInt(vectorColorHex.slice(3, 5), 16);
@@ -891,7 +852,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
       // Plume de retombées radioactives (Fallout)
       if (isDetonated && environmentParams?.explosionType === 'surface' && detonationTimeMs >= 5000) {
         const currentFalloutProgress = Math.max(0, Math.min(1, (detonationTimeMs - 5000) / 5000));
-        const falloutLengthKm = Math.max(0.1, Math.pow(strikeRadii.heavyBlast / 1000, 1.2) * (Math.max(1, environmentParams.windSpeed) / 10 + 1) * 3) * currentFalloutProgress;
+        const falloutLengthKm = calculateFalloutPlumeLengthKm(strikeRadii.heavyBlast, environmentParams.windSpeed) * currentFalloutProgress;
         const direction = environmentParams.windDirection;
         const numPoints = 30;
         const polygon = [];
@@ -1311,7 +1272,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
   ]);
 
   return (
-    <div className="w-full h-full relative cursor-crosshair touch-none">
+    <div className="w-full h-full relative cursor-crosshair touch-none" data-testid="map-viewport">
       {/* Shockwave PSI Status Bar */}
       <AnimatePresence>
         {currentBlastWaveRadius > 0 && currentPsi > 0 && currentBlastWaveRadius < radii.lightBlast && (
@@ -1319,27 +1280,60 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
             initial={{ opacity: 0, y: -20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -20, scale: 0.95 }}
-            className="absolute top-16 left-1/2 -translate-x-1/2 z-[200] pointer-events-none"
+            className="absolute top-[4.75rem] left-1/2 -translate-x-1/2 z-[90] pointer-events-none"
           >
-            <div className="bg-black/80 backdrop-blur-md border border-zinc-700/50 rounded-full px-4 py-1.5 flex items-center gap-3 shadow-[0_0_15px_rgba(0,0,0,0.5)]">
-               <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-               <span className="text-zinc-300 text-xs font-medium tracking-wide uppercase">Front de l'onde</span>
-               <div className="h-4 w-[1px] bg-zinc-700" />
-               <span className="text-red-400 font-mono font-bold">{currentPsi.toFixed(1)} psi</span>
+            <div className="bg-zinc-950/90 backdrop-blur-md border border-zinc-800 rounded-lg px-3.5 py-1.5 flex items-center gap-2.5 shadow-xl whitespace-nowrap">
+               <span className="text-zinc-400 text-[11px] font-medium tracking-wide uppercase">Front de l'onde</span>
+               <div className="h-3.5 w-[1px] bg-zinc-800" />
+               <span className="text-red-400 font-mono tabular-nums text-xs font-bold">{currentPsi.toFixed(1)} psi</span>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
 
       <DeckGL
-        viewState={viewState}
-        onViewStateChange={({ viewState }) => setViewState(viewState)}
+        viewState={{
+          longitude: Number.isFinite(viewState?.longitude) ? viewState.longitude : 2.3522,
+          latitude: Number.isFinite(viewState?.latitude) ? viewState.latitude : 48.8566,
+          zoom: Number.isFinite(viewState?.zoom) ? viewState.zoom : 10,
+          pitch: Number.isFinite(viewState?.pitch) ? viewState.pitch : 45,
+          bearing: Number.isFinite(viewState?.bearing) ? viewState.bearing : 0,
+          ...(viewState?.transitionDuration ? { transitionDuration: viewState.transitionDuration } : {})
+        }}
+        onViewStateChange={({ viewState: rawNextVs, interactionState }) => {
+          const isUserOrTransition = Boolean(
+            interactionState?.isDragging ||
+            interactionState?.isPanning ||
+            interactionState?.isZooming ||
+            interactionState?.isRotating ||
+            interactionState?.inTransition
+          );
+          if (!isUserOrTransition) return;
+          const nextVs = rawNextVs as {
+            longitude?: number;
+            latitude?: number;
+            zoom?: number;
+            pitch?: number;
+            bearing?: number;
+          };
+          if (
+            nextVs &&
+            Number.isFinite(nextVs.longitude) &&
+            Number.isFinite(nextVs.latitude) &&
+            Number.isFinite(nextVs.zoom)
+          ) {
+            setViewState({
+              longitude: nextVs.longitude,
+              latitude: nextVs.latitude,
+              zoom: nextVs.zoom,
+              pitch: Number.isFinite(nextVs.pitch) ? nextVs.pitch : 45,
+              bearing: Number.isFinite(nextVs.bearing) ? nextVs.bearing : 0
+            });
+          }
+        }}
         controller={{
-          // Active explicitement le déplacement vertical et horizontal sur écran tactile.
           dragPan: true,
-          // Conserve le zoom tactile sans détourner le geste de panoramique.
           touchZoom: true,
-          // Évite qu'une rotation involontaire bloque le déplacement de la carte.
           touchRotate: false,
           scrollZoom: true,
           doubleClickZoom: true,
@@ -1359,64 +1353,119 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           transformRequest={transformRequestCallback}
           reuseMaps
           attributionControl={true}
+          onLoad={() => setMapErrorMsg(null)}
           onError={(e) => {
+            const msg = (e as any)?.error?.message || '';
             console.warn('[MapLibre Info] Notification du moteur cartographique:', e);
+            if (mapProvider === 'mapbox') {
+              // Bascule automatiquement sur OpenFreeMap/ESRI si le style Mapbox est incompatible ou refusé
+              setMapProvider('free');
+              localStorage.setItem('nukemap_map_provider', 'free');
+              setMapErrorMsg("Style Mapbox indisponible ou incompatible — bascule automatique sur fonds OpenFreeMap/ESRI.");
+              return;
+            }
+            if (msg && !msg.toLowerCase().includes('abort')) {
+              setMapErrorMsg("Impossible de charger certaines tuiles cartographiques. Vérifiez votre connexion réseau.");
+            }
           }}
         >
-          <div className="absolute top-4 right-4 z-10 pointer-events-auto">
-            <NavigationControl visualizePitch={true} />
-          </div>
+          <NavigationControl position="top-right" visualizePitch={true} />
         </Map>
       </DeckGL>
 
-      <div className="absolute top-4 flex w-full pointer-events-none z-[100] px-4 items-start justify-end gap-3">
-        <div className="pointer-events-auto flex items-center bg-zinc-900 border border-zinc-700/50 rounded-md shadow-xl overflow-hidden mr-10 relative">
+      {/* Unified Top Bar: zero overlap across mobile & desktop */}
+      <div className="absolute top-3 inset-x-3 md:top-4 md:left-4 md:right-4 flex items-center justify-between gap-2 pointer-events-none z-[100]">
+        <div className="pointer-events-auto flex items-center gap-2 min-w-0">
+          {onReturnToPortal && (
+            <button
+              type="button"
+              onClick={onReturnToPortal}
+              aria-label="Retourner au portail de présentation"
+              className="min-h-11 flex items-center gap-2 bg-zinc-950/95 hover:bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-[11px] uppercase font-bold tracking-wider px-3.5 rounded-lg shadow-xl cursor-pointer hover:border-red-500/60 transition-colors backdrop-blur-md whitespace-nowrap shrink-0"
+            >
+              <LayoutDashboard className="w-4 h-4 text-red-500 shrink-0" />
+              <span className="sm:hidden">Portail</span>
+              <span className="hidden sm:inline">Portail Présentation</span>
+            </button>
+          )}
+        </div>
+
+        <div className="pointer-events-auto flex items-center bg-zinc-950/95 border border-zinc-800 rounded-lg shadow-xl overflow-hidden md:mr-14 shrink-0 backdrop-blur-md">
           <button
             type="button"
             onClick={() => setMapMode('night')}
-            className={`min-h-11 min-w-11 p-3 transition-colors duration-200 ${mapMode === 'night' ? 'bg-zinc-800 text-blue-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
+            aria-label="Mode Nuit"
+            aria-pressed={mapMode === 'night'}
+            className={`min-h-11 min-w-11 flex items-center justify-center transition-colors duration-200 cursor-pointer ${mapMode === 'night' ? 'bg-zinc-800 text-blue-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'}`}
             title="Mode Nuit"
           >
             <Moon className="w-4 h-4" />
           </button>
-          <div className="w-[1px] h-4 bg-zinc-800" />
+          <div className="w-[1px] h-5 bg-zinc-800" />
           <button
             type="button"
             onClick={() => setMapMode('day')}
-            className={`min-h-11 min-w-11 p-3 transition-colors duration-200 ${mapMode === 'day' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
+            aria-label="Mode Jour"
+            aria-pressed={mapMode === 'day'}
+            className={`min-h-11 min-w-11 flex items-center justify-center transition-colors duration-200 cursor-pointer ${mapMode === 'day' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'}`}
             title="Mode Jour"
           >
             <Sun className="w-4 h-4" />
           </button>
-          <div className="w-[1px] h-4 bg-zinc-800" />
+          <div className="w-[1px] h-5 bg-zinc-800" />
           <button
             type="button"
             onClick={() => setMapMode('satellite')}
-            className={`min-h-11 min-w-11 p-3 transition-colors duration-200 ${mapMode === 'satellite' ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
+            aria-label="Mode Satellite"
+            aria-pressed={mapMode === 'satellite'}
+            className={`min-h-11 min-w-11 flex items-center justify-center transition-colors duration-200 cursor-pointer ${mapMode === 'satellite' ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'}`}
             title="Mode Satellite"
           >
             <Globe className="w-4 h-4" />
           </button>
-          <div className="w-[1px] h-4 bg-zinc-800" />
+          <div className="w-[1px] h-5 bg-zinc-800" />
           <button
             type="button"
             onClick={handleOpenConfig}
-            className={`min-h-11 min-w-11 p-3 transition-colors duration-200 relative flex items-center justify-center ${isConfigOpen || mapProvider === 'mapbox' ? 'bg-zinc-800 text-blue-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'}`}
+            aria-label="Configuration Cartographie et Mapbox"
+            aria-expanded={isConfigOpen}
+            className={`min-h-11 min-w-11 flex items-center justify-center transition-colors duration-200 relative cursor-pointer ${isConfigOpen || mapProvider === 'mapbox' ? 'bg-zinc-800 text-blue-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'}`}
             title="Configuration Cartographie & Mapbox"
           >
             <Sliders className="w-4 h-4" />
             {mapProvider === 'mapbox' && mapboxToken.trim() && (
-              <span className="absolute top-2 right-2 w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-zinc-900" />
+              <span className="sr-only">Mapbox actif</span>
             )}
           </button>
         </div>
       </div>
+
+      {/* Map Tile / Worker Alert Banner if error occurs */}
+      {mapErrorMsg && (
+        <div role="alert" className="absolute top-[4.75rem] left-3 right-14 md:left-4 md:right-auto md:max-w-md z-[95] bg-red-950/95 border border-red-800 text-red-200 px-3 py-2 rounded-lg text-xs flex items-center justify-between gap-2 shadow-xl backdrop-blur-md">
+          <div className="flex items-center gap-2 min-w-0">
+            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
+            <span className="truncate">{mapErrorMsg}</span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setMapErrorMsg(null)}
+            aria-label="Fermer l'alerte cartographique"
+            className="min-h-8 min-w-8 flex items-center justify-center text-red-300 hover:text-white shrink-0 cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Modal interactif de configuration Cartographie & Mapbox */}
       <AnimatePresence>
         {isConfigOpen && (
           <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm pointer-events-auto">
             <motion.div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="map-config-title"
               initial={{ opacity: 0, scale: 0.95, y: 10 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 10 }}
@@ -1429,14 +1478,15 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
                     <Sliders className="w-4 h-4" />
                   </div>
                   <div>
-                    <h3 className="text-sm font-semibold text-zinc-100 uppercase tracking-wider">Configuration Cartographie</h3>
+                    <h3 id="map-config-title" className="text-sm font-semibold text-zinc-100 uppercase tracking-wider">Configuration Cartographie</h3>
                     <p className="text-xs text-zinc-400">Sélection du fournisseur et des styles vectoriels</p>
                   </div>
                 </div>
                 <button
                   type="button"
                   onClick={() => setIsConfigOpen(false)}
-                  className="p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors"
+                  aria-label="Fermer la configuration cartographique"
+                  className="min-h-11 min-w-11 flex items-center justify-center text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1457,7 +1507,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
                         <span className="text-xs font-medium">Fonds Libres (Gratuit)</span>
                         {providerInput === 'free' && <Check className="w-3.5 h-3.5 text-blue-400" />}
                       </div>
-                      <p className="text-[11px] text-zinc-400">CARTO & ESRI, sans clé API, zéro frais.</p>
+                      <p className="text-[11px] text-zinc-400">OpenFreeMap &amp; ESRI, sans clé API, zéro frais.</p>
                     </button>
 
                     <button

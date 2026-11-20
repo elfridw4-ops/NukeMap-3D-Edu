@@ -1,10 +1,10 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { MapView } from './components/Map';
-import { WEAPON_PRESETS, calculateBlastRadii, estimateClosestSeaDistanceKm, haversineKm, flightTimeMin, getSimulatedTimeSec, formatSimulatedTime, calculateTsunamiMetrics, calculateCasualtyReport } from './lib/nuclearMath';
+import { WEAPON_PRESETS, calculateBlastRadii, estimateClosestSeaDistanceKm, haversineKm, flightTimeMin, getSimulatedTimeSec, calculateTsunamiMetrics, calculateCasualtyReport, resolveVectorFlightProfile } from './lib/nuclearMath';
 import { WeaponConfig, LaunchParams, EnvironmentParams, PastStrike } from './types';
 import { fetchAutomaticGeoData, DEFAULT_AUTOMATIC_GEO_DATA, AutomaticGeoData } from './lib/geoDataFetcher';
-import { Play, Pause, RotateCcw, LayoutDashboard, Compass } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { usePersistedState } from './lib/hooks';
 import { PWAController } from './components/PWAController';
@@ -46,6 +46,8 @@ export default function App() {
 
   const [simulationMode, setSimulationMode] = useState<'instant' | 'ballistic'>('instant');
   const [flightProgress, setFlightProgress] = useState<number>(0);
+  // Message d'erreur balistique en ligne (remplace window.alert interdit en iframe)
+  const [ballisticError, setBallisticError] = useState<string | null>(null);
 
   // Detonation propagation animation state variables
   const [detonationTimeMs, setDetonationTimeMs] = useState<number>(10000); // 10000 means fully stabilized/completed
@@ -64,6 +66,21 @@ export default function App() {
   // Conserve l'état du bottom sheet afin de positionner les actions flottantes au-dessus du panneau.
   const [isMobileSidebarCollapsed, setIsMobileSidebarCollapsed] = useState(false);
 
+  // Permet d'accéder directement au simulateur via ?autostart=1 sans passer par le portail
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('autostart') === '1') {
+        setCurrentTab('simulator');
+      }
+    }
+  }, [setCurrentTab]);
+
+  // Réinitialise l'erreur de portée dès qu'un paramètre balistique ou géométrique change
+  useEffect(() => {
+    setBallisticError(null);
+  }, [target?.lat, target?.lng, origin?.lat, origin?.lng, launchParams.vectorId, launchParams.customRangeKm, simulationMode]);
+
   const handleMouseDown = (e: React.MouseEvent) => {
     // Only handle left mouse button
     if (e.button !== 0) return;
@@ -81,9 +98,14 @@ export default function App() {
       if (!hudMoving || !dragStartRef.current) return;
       const dx = e.clientX - dragStartRef.current.startX;
       const dy = e.clientY - dragStartRef.current.startY;
+      // Borne le déplacement du HUD dans les limites visibles du viewport
+      const maxX = Math.max(0, window.innerWidth - 520);
+      const minY = -Math.max(120, window.innerHeight - 360);
+      const clampedX = Math.max(-240, Math.min(maxX, dragStartRef.current.posValX + dx));
+      const clampedY = Math.max(minY, Math.min(90, dragStartRef.current.posValY + dy));
       setHudOffset({
-        x: dragStartRef.current.posValX + dx,
-        y: dragStartRef.current.posValY + dy
+        x: clampedX,
+        y: clampedY
       });
     };
 
@@ -210,7 +232,7 @@ export default function App() {
             windSpeed: autoData.windSpeedKmh,
             windDirection: autoData.windDirectionDeg,
             oceanDepthM: autoData.oceanDepthM ?? prev.oceanDepthM,
-            shoreDistanceKm: autoData.shoreDistanceKm ?? prev.shoreDistanceKm,
+            shoreDistanceKm: prev.autoShoreDistance === false ? prev.shoreDistanceKm : (autoData.shoreDistanceKm ?? prev.shoreDistanceKm),
             beachSlopePct: autoData.beachSlopePct ?? prev.beachSlopePct
           }));
         } catch (err) {
@@ -259,6 +281,20 @@ export default function App() {
     bearing: 0
   });
 
+  // Nettoie tout état de caméra hérité contenant des champs internes DeckGL (width/maxBounds)
+  useEffect(() => {
+    const raw = viewState as any;
+    if (raw && ('width' in raw || 'maxBounds' in raw || !Number.isFinite(raw.longitude) || !Number.isFinite(raw.latitude))) {
+      setViewState({
+        longitude: Number.isFinite(raw.longitude) && Math.abs(raw.longitude) < 179.5 ? raw.longitude : 2.3522,
+        latitude: Number.isFinite(raw.latitude) ? raw.latitude : 48.8566,
+        zoom: Number.isFinite(raw.zoom) ? raw.zoom : 10,
+        pitch: Number.isFinite(raw.pitch) ? raw.pitch : 45,
+        bearing: Number.isFinite(raw.bearing) ? raw.bearing : 0
+      });
+    }
+  }, []);
+
   const handleSearchSelect = (lng: number, lat: number) => {
     setViewState(prev => ({
       ...prev,
@@ -277,6 +313,7 @@ export default function App() {
 
   const startLaunchSequence = () => {
     if (!target) return;
+    setBallisticError(null);
 
     // S'assurer d'annuler tout vol ou animation balistique en arrière-plan
     if (launchAnimRef.current !== null) {
@@ -290,47 +327,25 @@ export default function App() {
       triggerDetonation();
       return;
     }
-    
-    // Reset any previous sequence
-    setFlightProgress(0.01);
-    
+
     // Geodesic distance using Haversine formula
     const distKm = haversineKm(origin.lat, origin.lng, target.lat, target.lng);
-    
-    // Retrieve vehicle speed in km/h 
-    let speedKmh = 24000;
-    let maxRange = 13000;
-    
-    const vectorId = launchParams.vectorId || 'icbm';
-    if (vectorId === 'icbm') {
-      speedKmh = 24000;
-      maxRange = 13000;
-    } else if (vectorId === 'slbm') {
-      speedKmh = 29000;
-      maxRange = 12000;
-    } else if (vectorId === 'bomber') {
-      speedKmh = 1010;
-      maxRange = 11000;
-    } else if (vectorId === 'cruise') {
-      speedKmh = 880;
-      maxRange = 2500;
-    } else if (vectorId === 'houthi') {
-      speedKmh = 900;
-      maxRange = 2000;
-    } else if (vectorId === 'custom') {
-      speedKmh = launchParams.customSpeedKmh || 10000;
-      maxRange = 99999;
-    }
-    
-    // Range capabilities verification
-    if (distKm > maxRange) {
-      alert(`⚠️ Portée insuffisante : Distance cible (${Math.round(distKm)} km) supérieure à la portée maximale du vecteur (${maxRange} km).`);
+
+    // Profil balistique canonique partagé entre la sidebar, la trajectoire 3D et le lancement
+    const profile = resolveVectorFlightProfile(launchParams);
+
+    // Vérification de portée sans window.alert (bloqué en iframe)
+    if (distKm > profile.maxRangeKm) {
+      setBallisticError(`Portée insuffisante : ${Math.round(distKm).toLocaleString('fr-FR')} km requis pour ${profile.maxRangeKm.toLocaleString('fr-FR')} km max.`);
       setFlightProgress(0);
       return;
     }
 
+    // Reset any previous sequence
+    setFlightProgress(0.01);
+
     // Calculated flight time in minutes
-    const fTime = flightTimeMin(distKm, speedKmh);
+    const fTime = flightTimeMin(distKm, profile.speedKmh);
     
     // Map flight time to visual duration compressed between 4000ms & 6000ms
     // Short ranges/speeds are faster (~4000ms), long ranges are slower (~6000ms)
@@ -539,12 +554,15 @@ export default function App() {
         onClearPastStrikes={() => setPastStrikes([])}
         casualtyReport={casualtyReport}
         onMobileCollapsedChange={setIsMobileSidebarCollapsed}
+        ballisticError={ballisticError}
+        onClearBallisticError={() => setBallisticError(null)}
       />
 
       {/* Sidebar Toggle Handle for Desktop */}
       <button 
         type="button"
         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+        aria-label={isSidebarOpen ? "Masquer le panneau latéral" : "Afficher le panneau latéral"}
         className="fixed top-1/2 z-50 w-6 h-12 bg-zinc-900 border border-zinc-800 rounded-r-lg flex items-center justify-center transition-all duration-300 shadow-xl text-zinc-400 hover:text-white text-xs font-mono font-bold hidden md:flex -translate-y-1/2 cursor-pointer"
         style={{ left: isSidebarOpen ? '300px' : '0px' }}
         title={isSidebarOpen ? "Masquer le panneau latéral (Sidebar)" : "Afficher le panneau latéral (Sidebar)"}
@@ -553,22 +571,6 @@ export default function App() {
       </button>
 
       <main className="relative flex-1 h-full z-0 overflow-hidden">
-        {/* Floating tab selector to switch back to portal or review current mode */}
-        <div className="absolute top-4 left-4 right-4 z-10 flex flex-wrap gap-2 md:right-auto">
-          <button
-            type="button"
-            onClick={() => setCurrentTab('landing')}
-            className="flex items-center gap-1.5 bg-zinc-950/90 hover:bg-zinc-900 border border-zinc-805 text-zinc-100 font-mono text-[9px] uppercase font-bold tracking-widest py-1.5 px-3.5 rounded-lg shadow-xl cursor-pointer hover:border-red-500/50 transition-all duration-300 backdrop-blur-md"
-          >
-            <LayoutDashboard className="w-3.5 h-3.5 text-red-500" />
-            Portail Présentation
-          </button>
-          <div className="bg-zinc-950/90 border border-zinc-805 text-zinc-400 font-mono text-[9px] uppercase font-bold tracking-widest py-1.5 px-3.5 rounded-lg shadow-xl flex items-center gap-1.5 backdrop-blur-md">
-            <span className="w-1.5 h-1.5 bg-red-500 rounded-full animate-pulse" />
-            CONSOLE ACTIVE
-          </div>
-        </div>
-
         <MapView 
           multiStrikeMode={multiStrikeMode}
           target={target} 
@@ -587,6 +589,7 @@ export default function App() {
           isDetonationAnimating={isDetonationAnimating}
           isDetonationPaused={isDetonationPaused}
           pastStrikes={pastStrikes}
+          onReturnToPortal={() => setCurrentTab('landing')}
           onMapClick={(lng, lat) => {
             cancelFlight();
             if (selectionMode === 'target') {
@@ -617,11 +620,10 @@ export default function App() {
           />
         )}
 
-        {/* NC-77 TARGET PROPAGATION CHRONOLOGY CONTROLLER HUD */}
         {/* NC-77 TARGET PROPAGATION CHRONOLOGY CONTROLLER HUD (Desktop-Only Draggable & Minimizable) */}
         {target && isDetonated && (
           <div 
-            className="hidden md:flex absolute bottom-28 left-[320px] z-20 w-[460px] bg-zinc-950/90 border border-zinc-800/80 p-3.5 px-4 rounded-xl shadow-2xl backdrop-blur-xl flex-col gap-2 transition-[opacity] duration-300"
+            className={`hidden md:flex absolute bottom-28 ${isSidebarOpen ? 'left-[320px]' : 'left-4'} z-20 w-[460px] max-w-[calc(100vw-2rem)] bg-zinc-950/90 border border-zinc-800/80 p-3.5 px-4 rounded-xl shadow-2xl backdrop-blur-xl flex-col gap-2 transition-[opacity,left] duration-300`}
             style={{
               transform: `translate(${hudOffset.x}px, ${hudOffset.y}px)`,
               userSelect: hudMoving ? 'none' : 'auto'
@@ -633,14 +635,11 @@ export default function App() {
               title="Cliquer et glisser pour déplacer"
             >
               <div className="flex items-center gap-1.5 font-bold font-mono text-[9px] tracking-widest text-zinc-400">
-                <span className="relative flex h-2 w-2">
-                  <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isDetonationAnimating ? 'bg-red-400' : 'bg-green-400'}`}></span>
-                  <span className={`relative inline-flex rounded-full h-2 w-2 ${isDetonationAnimating ? 'bg-red-500' : 'bg-green-500'}`}></span>
-                </span>
+                <span className={`inline-flex rounded-full h-2 w-2 ${isDetonationAnimating ? 'bg-red-500' : 'bg-emerald-500'}`} />
                 SIMULATEUR DE PROPAGATION CHRONOLOGIQUE
               </div>
               <div className="flex items-center gap-2">
-                <div className="font-mono text-xs font-bold text-red-400 bg-red-950/20 px-2 py-0.5 rounded border border-red-900/40 select-text">
+                <div className="font-mono tabular-nums text-xs font-bold text-red-400 bg-red-950/20 px-2 py-0.5 rounded border border-red-900/40 select-text">
                   T+{simulatedTimeSec < 60 
                     ? `${simulatedTimeSec.toFixed(2)}s` 
                     : simulatedTimeSec < 3600 
@@ -654,7 +653,8 @@ export default function App() {
                     e.stopPropagation();
                     setIsHudMinimized(!isHudMinimized);
                   }}
-                  className="p-1 px-1.5 rounded bg-zinc-900 border border-zinc-850 hover:border-zinc-700 font-mono text-xs text-zinc-400 hover:text-white transition-all w-6 h-6 flex items-center justify-center cursor-pointer"
+                  aria-label={isHudMinimized ? "Restaurer le contrôleur de propagation" : "Réduire le contrôleur de propagation"}
+                  className="p-1 px-1.5 rounded bg-zinc-900 border border-zinc-800 hover:border-zinc-700 font-mono text-xs text-zinc-400 hover:text-white transition-all w-7 h-7 flex items-center justify-center cursor-pointer"
                   title={isHudMinimized ? "Restaurer" : "Réduire"}
                 >
                   {isHudMinimized ? '□' : '—'}
@@ -680,7 +680,7 @@ export default function App() {
                         }
                       }
                     }}
-                    className="p-1 px-3 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-100 transition-colors shrink-0 flex items-center justify-center border border-zinc-700/50 cursor-pointer"
+                    className="p-1.5 px-3 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-100 transition-colors shrink-0 flex items-center justify-center border border-zinc-700/50 cursor-pointer"
                     style={{ width: '76px' }}
                   >
                     {detonationTimeMs >= 10000 ? (
@@ -697,16 +697,17 @@ export default function App() {
                       type="range" 
                       min="0" 
                       max="10000" 
+                      aria-label="Chronologie de la détonation"
                       value={Math.round(detonationTimeMs)} 
                       onChange={(e) => {
-                        const newVal = parseInt(e.target.value);
+                        const newVal = parseInt(e.target.value, 10);
                         setDetonationTimeMs(newVal);
                         setIsDetonationPaused(true);
                         if (!isDetonationAnimating) {
                           setIsDetonationAnimating(true);
                         }
                       }}
-                      className="w-full h-1 bg-zinc-850 accent-red-500 rounded-lg appearance-none cursor-pointer"
+                      className="w-full h-1.5 bg-zinc-800 accent-red-500 rounded-lg appearance-none cursor-pointer"
                     />
                   </div>
 
@@ -717,7 +718,8 @@ export default function App() {
                       setIsDetonationAnimating(true);
                       setIsDetonationPaused(false);
                     }}
-                    className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition-colors shrink-0 border border-zinc-700/50 flex items-center justify-center cursor-pointer"
+                    aria-label="Recommencer la détonation"
+                    className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors shrink-0 border border-zinc-700/50 flex items-center justify-center cursor-pointer"
                     title="Recommencer la détonation"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
@@ -733,13 +735,13 @@ export default function App() {
                     </span>
                   </div>
                   
-                  <div className="text-[11px] text-zinc-300 bg-zinc-950/80 border border-zinc-850 p-2.5 rounded-lg leading-relaxed font-sans shadow-inner">
+                  <div className="text-[11px] text-zinc-300 bg-zinc-950/80 border border-zinc-800 p-2.5 rounded-lg leading-relaxed font-sans shadow-inner">
                     {activePhysicalStatus.desc}
                   </div>
 
-                  <div className="flex items-center justify-between text-[8px] text-zinc-500 font-mono">
+                  <div className="flex items-center justify-between text-[9px] text-zinc-400 font-mono tabular-nums">
                     <span>Vitesse d'animation compressée</span>
-                    <span className="font-semibold text-zinc-400">
+                    <span className="font-semibold text-zinc-300">
                       {detonationTimeMs < 10000 ? `${(detonationTimeMs / 1000).toFixed(2)}s / 10.00s` : "ÉQUILIBRE REJOINT"}
                     </span>
                   </div>
@@ -749,19 +751,35 @@ export default function App() {
           </div>
         )}
 
-        {/* Mobile Propagation Toggle Trigger Button */}
+        {/* Mobile Docked Action & Compact Telemetry Bar directly above the bottom sheet */}
         {target && isDetonated && (
-          <button
-            type="button"
-            onClick={() => setIsMobileHudOpen(true)}
-            className={`fixed ${isMobileSidebarCollapsed ? 'bottom-24' : 'bottom-[calc(55dvh+1rem)]'} right-4 z-40 md:hidden bg-zinc-950/95 border border-zinc-800 hover:border-red-500 text-white font-bold p-3 px-3.5 rounded-2xl shadow-2xl flex items-center gap-2 text-[9px] font-mono tracking-widest active:scale-95 transition-all cursor-pointer backdrop-blur-md`}
+          <div
+            className={`fixed ${isMobileSidebarCollapsed ? 'bottom-[6.25rem]' : 'bottom-[calc(55dvh+0.75rem)]'} inset-x-3 z-20 flex items-end justify-between gap-2 pointer-events-none md:hidden transition-all duration-300`}
           >
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-red-500"></span>
-            </span>
-            CHRONOLOGIE PROPAGATION
-          </button>
+            {/* Compact Impact Telemetry Pill-Free Card (left) */}
+            <div className="bg-zinc-950/90 backdrop-blur-md border border-zinc-800 px-3 py-2 rounded-xl shadow-xl min-w-0 max-w-[calc(100%-11.5rem)] flex flex-col gap-0.5">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+                <span className="text-[10px] font-bold text-red-400 tracking-wider uppercase truncate">
+                  {weapon.name} ({effectiveYield >= 1000 ? `${effectiveYield / 1000} Mt` : `${effectiveYield} kt`})
+                </span>
+              </div>
+              <span className="text-[10px] font-mono tabular-nums text-zinc-300 truncate">
+                {target.lat.toFixed(3)}°, {target.lng.toFixed(3)}°
+              </span>
+            </div>
+
+            {/* Mobile Propagation Toggle Trigger Button (right) */}
+            <button
+              type="button"
+              onClick={() => setIsMobileHudOpen(true)}
+              aria-label="Ouvrir le contrôleur de chronologie de propagation"
+              className="pointer-events-auto min-h-11 bg-zinc-950/95 border border-zinc-800 hover:border-red-500 text-white font-bold px-3.5 py-2 rounded-xl shadow-2xl flex items-center gap-2 text-[10px] font-mono tracking-wider uppercase active:scale-95 transition-all cursor-pointer backdrop-blur-md shrink-0"
+            >
+              <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
+              <span>Chronologie</span>
+            </button>
+          </div>
         )}
 
         {/* Mobile Propagation Drawer Overlay/Bottom Sheet */}
@@ -770,19 +788,20 @@ export default function App() {
             {/* Tap outside to close helper */}
             <div className="absolute inset-0" onClick={() => setIsMobileHudOpen(false)} />
             
-            <div className="relative w-full max-h-[40vh] bg-zinc-950 border-t border-zinc-800 rounded-t-3xl p-5 flex flex-col gap-4 overflow-y-auto shadow-2xl z-10 font-sans">
-              {/* Drawer Top Header with a beautiful center drag visual indicator */}
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="Contrôleur de simulation de propagation"
+              className="relative w-full max-h-[45dvh] bg-zinc-950 border-t border-zinc-800 rounded-t-2xl p-5 flex flex-col gap-4 overflow-y-auto shadow-2xl z-10 font-sans"
+            >
               <div className="flex flex-col gap-1 shrink-0">
                 <div className="w-12 h-1 bg-zinc-800 rounded-full mx-auto" />
-                <div className="flex items-center justify-between mt-1 pb-2 border-b border-zinc-900">
-                  <div className="flex items-center gap-1.5 font-bold font-mono text-[9px] tracking-wider text-zinc-400">
-                    <span className="relative flex h-2 w-2">
-                      <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isDetonationAnimating ? 'bg-red-400' : 'bg-green-400'}`}></span>
-                      <span className={`relative inline-flex rounded-full h-2 w-2 ${isDetonationAnimating ? 'bg-red-500' : 'bg-green-500'}`}></span>
-                    </span>
-                    SIMULATION DE PROPAGATION
+                <div className="flex items-center justify-between mt-1 pb-2 border-b border-zinc-900 gap-2">
+                  <div className="flex items-center gap-1.5 font-bold font-mono text-[10px] tracking-wider text-zinc-300">
+                    <span className={`inline-flex rounded-full h-2 w-2 ${isDetonationAnimating ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                    PROPAGATION
                   </div>
-                  <div className="font-mono text-xs font-bold text-red-400 bg-red-950/20 px-2 py-0.5 rounded border border-red-900/40">
+                  <div className="font-mono tabular-nums text-xs font-bold text-red-400 bg-red-950/20 px-2 py-0.5 rounded border border-red-900/40">
                     T+{simulatedTimeSec < 60 
                       ? `${simulatedTimeSec.toFixed(2)}s` 
                       : simulatedTimeSec < 3600 
@@ -793,7 +812,8 @@ export default function App() {
                   <button 
                     type="button"
                     onClick={() => setIsMobileHudOpen(false)}
-                    className="p-1 px-2.5 text-zinc-400 hover:text-white bg-zinc-900 border border-zinc-800 text-xs rounded font-mono font-bold cursor-pointer"
+                    aria-label="Fermer la chronologie"
+                    className="min-h-11 min-w-11 text-zinc-300 hover:text-white bg-zinc-900 border border-zinc-800 text-xs rounded-lg font-mono font-bold cursor-pointer flex items-center justify-center"
                   >
                     ✕
                   </button>
@@ -816,7 +836,7 @@ export default function App() {
                       }
                     }
                   }}
-                  className="p-1.5 px-3 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-100 transition-colors shrink-0 text-[10px] font-mono font-bold cursor-pointer"
+                  className="min-h-11 px-4 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 transition-colors shrink-0 text-[10px] font-mono font-bold cursor-pointer"
                 >
                   {detonationTimeMs >= 10000 ? "REJOUER" : isDetonationPaused ? "PLAY" : "PAUSE"}
                 </button>
@@ -826,16 +846,17 @@ export default function App() {
                     type="range" 
                     min="0" 
                     max="10000" 
+                    aria-label="Curseur temporel de détonation"
                     value={Math.round(detonationTimeMs)} 
                     onChange={(e) => {
-                      const newVal = parseInt(e.target.value);
+                      const newVal = parseInt(e.target.value, 10);
                       setDetonationTimeMs(newVal);
                       setIsDetonationPaused(true);
                       if (!isDetonationAnimating) {
                         setIsDetonationAnimating(true);
                       }
                     }}
-                    className="w-full h-1 bg-zinc-850 accent-red-500 rounded-lg appearance-none cursor-pointer"
+                    className="w-full h-2 bg-zinc-800 accent-red-500 rounded-lg appearance-none cursor-pointer"
                   />
                 </div>
 
@@ -846,22 +867,23 @@ export default function App() {
                     setIsDetonationAnimating(true);
                     setIsDetonationPaused(false);
                   }}
-                  className="p-1.5 rounded bg-zinc-800 border border-zinc-755 text-zinc-400 hover:text-white transition-colors shrink-0 flex items-center justify-center cursor-pointer"
+                  aria-label="Recommencer la détonation"
+                  className="min-h-11 min-w-11 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white transition-colors shrink-0 flex items-center justify-center cursor-pointer"
                 >
-                  <RotateCcw className="w-3.5 h-3.5" />
+                  <RotateCcw className="w-4 h-4" />
                 </button>
               </div>
 
               {/* Status information on Mobile */}
               <div className="flex flex-col gap-1.5 mt-1 overflow-y-auto">
                 <div className="flex items-center justify-between text-[10px] font-mono">
-                  <span className="text-zinc-500 font-medium font-sans">Statut physique :</span>
+                  <span className="text-zinc-400 font-medium font-sans">Statut physique :</span>
                   <span className={`font-bold uppercase ${activePhysicalStatus.colorClass}`}>
                     {activePhysicalStatus.title}
                   </span>
                 </div>
                 
-                <div className="text-[11px] text-zinc-300 bg-zinc-900/40 border border-zinc-900 p-2.5 rounded-lg leading-relaxed font-sans shrink-0">
+                <div className="text-[11px] text-zinc-300 bg-zinc-900/50 border border-zinc-800 p-2.5 rounded-lg leading-relaxed font-sans shrink-0">
                   {activePhysicalStatus.desc}
                 </div>
               </div>
@@ -869,29 +891,29 @@ export default function App() {
           </div>
         )}
 
-        {/* UI Overlay info */}
+        {/* Desktop UI Overlay info */}
         {target && isDetonated && (
-          <div className="absolute top-20 inset-x-4 md:inset-x-auto md:top-auto md:bottom-6 md:right-6 z-10 bg-zinc-950/80 backdrop-blur-lg border border-zinc-800/60 p-4 rounded-xl shadow-2xl pointer-events-none flex flex-col gap-3 md:w-max w-auto">
+          <div className="hidden md:flex absolute bottom-10 right-4 z-10 bg-zinc-950/85 backdrop-blur-lg border border-zinc-800/80 p-4 rounded-xl shadow-2xl pointer-events-none flex-col gap-3 w-max">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-red-500/20 flex items-center justify-center border border-red-500/30">
-                <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
+                <div className="w-3 h-3 bg-red-500 rounded-full" />
               </div>
               <div className="flex flex-col">
                 <span className="text-sm font-bold text-red-500 tracking-wider">IMPACT CONFIRMÉ</span>
-                <span className="text-xs text-zinc-400 font-medium">
+                <span className="text-xs text-zinc-300 font-medium tabular-nums">
                   {weapon.name} ({effectiveYield >= 1000 ? `${effectiveYield / 1000} Mt` : `${effectiveYield} kt`})
                 </span>
               </div>
             </div>
-            <div className="pt-2 border-t border-zinc-800/50 flex flex-col gap-1 text-[10px] font-mono text-zinc-500 uppercase">
+            <div className="pt-2 border-t border-zinc-800/60 flex flex-col gap-1 text-[10px] font-mono tabular-nums text-zinc-400 uppercase">
               <div className="flex justify-between items-center gap-4">
                 <span>Trg:</span>
-                <span className="text-zinc-300">[{target.lat.toFixed(4)}°, {target.lng.toFixed(4)}°]</span>
+                <span className="text-zinc-200">[{target.lat.toFixed(4)}°, {target.lng.toFixed(4)}°]</span>
               </div>
               {origin && (
                 <div className="flex justify-between items-center gap-4">
                   <span>Org:</span>
-                  <span className="text-zinc-300">[{origin.lat.toFixed(4)}°, {origin.lng.toFixed(4)}°]</span>
+                  <span className="text-zinc-200">[{origin.lat.toFixed(4)}°, {origin.lng.toFixed(4)}°]</span>
                 </div>
               )}
             </div>

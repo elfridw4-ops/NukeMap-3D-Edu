@@ -25,10 +25,13 @@ export function WeaponConfigSection({
       </h2>
       
       <div className="space-y-2">
-        <label className="text-xs text-zinc-400 font-medium tracking-wide">Préréglage historique</label>
+        <label htmlFor="weapon-preset-select" className="text-xs text-zinc-400 font-medium tracking-wide block">
+          Préréglage historique
+        </label>
         <div className="relative">
-          <select 
-            className="w-full appearance-none bg-zinc-950 border border-zinc-800/80 rounded-lg p-2.5 pl-3 pr-10 text-xs outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500/50 transition-all shadow-inner text-zinc-200"
+          <select
+            id="weapon-preset-select"
+            className="w-full appearance-none bg-zinc-950 border border-zinc-800/80 rounded-lg p-2.5 pl-3 pr-10 text-xs outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500/50 transition-all shadow-inner text-zinc-200 tabular-nums"
             value={weapon.id}
             onChange={(e) => {
               const selected = WEAPON_PRESETS.find(w => w.id === e.target.value);
@@ -37,7 +40,7 @@ export function WeaponConfigSection({
           >
             {WEAPON_PRESETS.map((w) => (
               <option key={w.id} value={w.id} className="bg-zinc-900 border-none">
-                {w.name} ({w.yieldKt >= 1000 ? `${w.yieldKt/1000} Mt` : `${w.yieldKt} kt`})
+                {w.name} ({w.yieldKt >= 1000 ? `${w.yieldKt / 1000} Mt` : `${w.yieldKt} kt`})
               </option>
             ))}
           </select>
@@ -45,7 +48,7 @@ export function WeaponConfigSection({
             <ChevronUp className="w-4 h-4 rotate-180" />
           </div>
         </div>
-        <p className="text-[10px] text-zinc-500 font-mono mt-1 px-1">{weapon.description}</p>
+        <p className="text-[10px] text-zinc-400 font-mono mt-1 px-1">{weapon.description}</p>
       </div>
 
       <AnimatePresence>
@@ -58,17 +61,23 @@ export function WeaponConfigSection({
             className="overflow-hidden"
           >
             <div className="space-y-2 pt-3 mt-2 border-t border-zinc-800/50">
-              <label className="text-xs text-zinc-400 font-medium tracking-wide">Puissance personnalisée (kt)</label>
-              <input 
-                type="number" 
+              <label htmlFor="custom-yield-input" className="text-xs text-zinc-400 font-medium tracking-wide block">
+                Puissance personnalisée (kt)
+              </label>
+              <input
+                id="custom-yield-input"
+                type="number"
                 min="0.01"
                 step="10"
-                className="w-full bg-zinc-950 border border-zinc-800/80 rounded-lg p-2.5 text-xs outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500/50 transition-all font-mono shadow-inner text-zinc-200"
+                className="w-full bg-zinc-950 border border-zinc-800/80 rounded-lg p-2.5 text-xs outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500/50 transition-all font-mono tabular-nums shadow-inner text-zinc-200"
                 value={customYield}
-                onChange={(e) => setCustomYield(Number(e.target.value) || 0)}
+                onChange={(e) => {
+                  const parsed = parseFloat(e.target.value);
+                  setCustomYield(Number.isFinite(parsed) && parsed > 0 ? Math.max(0.01, parsed) : 0.01);
+                }}
               />
-              <p className="text-[10px] text-zinc-500 px-1">
-                1000 kt = 1 Mégatonne (Mt)
+              <p className="text-[10px] text-zinc-400 px-1 tabular-nums">
+                1000 kt = 1 Mégatonne (Mt) • Minimum 0.01 kt
               </p>
             </div>
           </motion.div>

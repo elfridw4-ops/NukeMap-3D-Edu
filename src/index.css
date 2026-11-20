@@ -16,3 +16,16 @@
   }
 }
 
+/* Positionne les contrôles de zoom MapLibre sous la barre supérieure unifiée sur mobile */
+.maplibregl-ctrl-top-right {
+  top: 4.5rem !important;
+  right: 0.5rem !important;
+}
+
+@media (min-width: 768px) {
+  .maplibregl-ctrl-top-right {
+    top: 0.75rem !important;
+    right: 0.75rem !important;
+  }
+}
+

@@ -475,8 +475,9 @@ out center;`;
               result.densityLevel = "Faible Densité (Village)";
             }
             
-            // Scale by distance
-            const scaleFactor = 0.85 + Math.random() * 0.3;
+            // Scale deterministically by coordinates so repeated clicks on the same area remain consistent
+            const coordSeed = Math.abs(Math.sin(lat * 12.9898 + lng * 78.233) * 43758.5453) % 1;
+            const scaleFactor = 0.85 + coordSeed * 0.3;
             result.population = Math.round(estPop * scaleFactor);
             result.densityValue = Math.round(estDensity * scaleFactor);
           }

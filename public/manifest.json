@@ -1,18 +1,29 @@
 {
+  "id": "/",
   "version": "1.0.0",
   "name": "NUKEMAP EDU",
   "short_name": "NukeMap EDU",
-  "description": "Simulateur scientifique interactif 3D d'impacts nucléaires.",
+  "lang": "fr",
+  "description": "Simulateur pédagogique interactif 3D d'impacts nucléaires basé sur les lois d'échelle de Glasstone & Dolan.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
+  "orientation": "any",
   "background_color": "#09090b",
-  "theme_color": "#ef4444",
+  "theme_color": "#09090b",
+  "categories": ["education", "science"],
   "icons": [
     {
       "src": "/icon-512.png",
-      "sizes": "512x512",
-      "type": "image/png"
+      "sizes": "1024x1024",
+      "type": "image/jpeg",
+      "purpose": "any"
+    },
+    {
+      "src": "/icon.png",
+      "sizes": "1024x1024",
+      "type": "image/jpeg",
+      "purpose": "any"
     }
   ]
 }

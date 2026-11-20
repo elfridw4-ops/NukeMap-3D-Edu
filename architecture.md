@@ -102,7 +102,7 @@ Toutes les données transitent par l'état central défini dans `App.tsx`, qui d
 
 #### `src/components/Map.tsx`
 *   **Rôle et responsabilités** : Composant d'affichage géographique 2D/3D lourd.
-*   **Pourquoi il existe** : Il instancie MapLibre GL, insère le fond de carte sombre Carto Basemaps, et empile les couches de géométrie Deck.gl (`ScatterplotLayer` pour les ondes thermiques/chocs, `PolygonLayer` pour les retombées, `PointCloudLayer` pour le champignon 3D).
+*   **Pourquoi il existe** : Il instancie MapLibre GL (avec worker local Vite), charge les styles vectoriels libres OpenFreeMap (Nuit/Jour) ou satellite ESRI (avec option Mapbox HD et repli automatique), et empile les couches de géométrie Deck.gl (`ScatterplotLayer` pour les ondes thermiques/chocs, `PolygonLayer` pour les retombées, `PointCloudLayer` pour le champignon 3D).
 *   **Ce qui casse s'il disparaît** : Plus aucun élément géographique ne s'affiche (perte de la carte visuelle).
 *   **Qui l'utilise** : `App.tsx` pour contenir la moitié de l'écran principal.
 

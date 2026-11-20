@@ -2,6 +2,8 @@ import React from 'react';
 import { cn } from '../../lib/utils';
 
 export interface CustomSliderProps {
+  id?: string;
+  ariaLabel?: string;
   min: number;
   max: number;
   step?: number;
@@ -10,8 +12,10 @@ export interface CustomSliderProps {
   colorClass: string;
 }
 
-export function CustomSlider({ min, max, step = 1, value, onChange, colorClass }: CustomSliderProps) {
-  const percentage = ((value - min) / (max - min)) * 100;
+export function CustomSlider({ id, ariaLabel, min, max, step = 1, value, onChange, colorClass }: CustomSliderProps) {
+  const span = max - min;
+  const rawPct = span > 0 ? ((value - min) / span) * 100 : 0;
+  const percentage = Math.max(0, Math.min(100, rawPct));
   
   return (
     <div className="relative w-full h-11 bg-transparent rounded-full overflow-visible group flex items-center">
@@ -22,16 +26,18 @@ export function CustomSlider({ min, max, step = 1, value, onChange, colorClass }
         style={{ width: `${percentage}%` }}
       />
       <input 
+        id={id}
         type="range" 
+        aria-label={ariaLabel}
         min={min} 
         max={max} 
         step={step}
         value={value} 
         onChange={(e) => onChange(Number(e.target.value))}
-        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+        className="peer absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
       />
       <div 
-        className="absolute w-4 h-4 bg-zinc-200 rounded-full border-2 border-zinc-900 pointer-events-none shadow-sm transition-transform duration-100 ease-out group-active:scale-125 group-hover:bg-white z-20"
+        className="absolute w-4 h-4 bg-zinc-200 rounded-full border-2 border-zinc-900 pointer-events-none shadow-sm transition-transform duration-100 ease-out group-active:scale-125 group-hover:bg-white peer-focus-visible:ring-2 peer-focus-visible:ring-white/80 z-20"
         style={{ left: `calc(${percentage}% - 7px)` }}
       />
     </div>

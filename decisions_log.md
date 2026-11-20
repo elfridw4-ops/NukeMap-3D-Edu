@@ -93,5 +93,43 @@
   * Autonomie complète de la console active qui conserve l'intégralité de ses coordonnées GPS, trajectoires de missiles, impacts et historiques même si l'utilisateur navigue vers le portail.
   * Zéro régression sur le framerate ou sur l'expérience cartographique pure.
 
+---
+
+## ADR-08 : Worker MapLibre GL Local via Vite & Basemaps OpenFreeMap / ESRI
+
+* **Date** : 2026-11-20
+* **Contexte** : Le chargement du worker MapLibre depuis un CDN externe (`maplibre-gl-csp-worker.js`) provoquait une erreur fatale `Worker failed to load`, rendant la carte noire. De plus, l'utilisation par défaut de styles Mapbox v3 (`dark-v11`) sous MapLibre v6 et les tuiles CARTO avec filigrane `API KEY REQUIRED` empêchaient l'affichage géographique fiable.
+* **Décision** : Importer le worker local directement via Vite (`maplibre-gl/dist/maplibre-gl-worker.mjs?url`) et l'enregistrer via `maplibregl.setWorkerUrl(...)`. Basculer le fournisseur gratuit par défaut sur les styles vectoriels `OpenFreeMap` (`dark` et `positron`) et raster `ESRI World Imagery` pour le mode satellite, avec bascule de secours automatique vers `free` si une erreur Mapbox survient.
+* **Alternatives envisagées** : Servir manuellement un fichier worker dans `public/` ou dépendre d'un CDN tiers, rejetées pour des raisons de cohérence de version et de fiabilité hors-ligne/iframe.
+* **Conséquences** :
+  * Zéro erreur console sur le chargement du worker MapLibre.
+  * Affichage cartographique vectoriel net sans clé API obligatoire ni filigrane tiers.
+
+---
+
+## ADR-09 : Barre Supérieure Unifiée, Bottom Sheet Mobile Replié par Défaut & Assainissement du `viewState` Deck.gl
+
+* **Date** : 2026-11-20
+* **Contexte** : Sur mobile (`390x844`), les boutons flottants supérieurs entraient en collision avec le contrôle zoom `.maplibregl-ctrl-top-right`, le tiroir inférieur ouvert masquait la scène 3D au démarrage et se rognait à `75px` une fois replié, et la persistance brute de l'objet `viewState` interne de Deck.gl (`width`, `maxBounds`) provoquait une dérive de longitude vers `-179.86°` lors des changements de viewport.
+* **Décision** :
+  1. Unifier la barre supérieure dans `Map.tsx` et positionner `.maplibregl-ctrl-top-right` à `top: 4.5rem` sous `< 768px` dans `src/index.css`.
+  2. Initialiser le tiroir mobile à l'état replié (`88px`, `window.innerWidth < 768`) avec barre compacte `télémétrie + Chronologie` juste au-dessus.
+  3. Filtrer `onViewStateChange` sur les interactions utilisateur/transitions et ne persister que `{ longitude, latitude, zoom, pitch, bearing }`.
+* **Alternatives envisagées** : Réinitialiser la caméra à chaque redimensionnement, rejetée car elle effacerait le cadrage manuel de l'utilisateur.
+* **Conséquences** :
+  * Lisibilité complète de la carte et du champignon 3D dès l'ouverture sur mobile comme sur desktop.
+  * Stabilité géographique garantie lors des bascules de fenêtre ou d'orientation.
+
+---
+
+## ADR-10 : Source Unique de Vérité Physique (`nuclearMath.ts`) & Validation Inline
+
+* **Date** : 2026-11-20
+* **Contexte** : Des divergences existaient entre `App.tsx`, `Map.tsx`, `TargetConfigSection.tsx`, `EnvironmentSection.tsx` et `ImpactDashboardSection.tsx` concernant la portée/vitesse des vecteurs, la distance euclidienne vs Haversine, l'omission des paramètres côtiers (`coastalDepthM`, `manningN`), l'utilisation de `window.alert` (interdit en iframe) et le repli aléatoire OSM (`Math.random()`).
+* **Décision** : Exporter `resolveVectorFlightProfile` et `calculateFalloutPlumeLengthKm` dans `nuclearMath.ts`, borner `yieldKt >= 0.01`, unifier `calculateTsunamiMetrics` et `haversineKm` dans toute l'interface, remplacer `window.alert` par un état `ballisticError` (`role="alert"`), et rendre déterministe le repli géodonnée via un hachage de coordonnées.
+* **Alternatives envisagées** : Dupliquer les formules par composant, rejetée pour éviter toute incohérence numérique entre carte et jauges.
+* **Conséquences** :
+  * Cohérence arithmétique vérifiée par tests unitaires (`node:test` et `vitest`) entre tous les panneaux et couches 3D.
+
 
 

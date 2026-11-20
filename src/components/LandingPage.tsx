@@ -80,17 +80,14 @@ export function LandingPage({ onLaunchSimulator }: LandingPageProps) {
       {/* Hero Header Section */}
       <header className="relative max-w-7xl mx-auto px-6 pt-16 pb-12 md:pt-24 md:pb-16 flex flex-col items-center text-center z-10">
         
-        {/* Bunker chic badge status */}
+        {/* Bunker chic badge */}
         <motion.div 
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.6 }}
-          className="inline-flex items-center gap-2 bg-red-950/30 border border-red-900/50 px-3 py-1.5 rounded-full text-[10px] font-mono tracking-widest text-red-400 uppercase font-semibold mb-6"
+          className="inline-flex items-center gap-2 bg-red-950/30 border border-red-900/50 px-3 py-1.5 rounded-lg text-[10px] font-mono tracking-widest text-red-400 uppercase font-semibold mb-6"
         >
-          <span className="relative flex h-2.5 w-2.5">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
-          </span>
+          <span className="h-2 w-2 rounded-full bg-red-500" />
           CONSOLE D'ÉVALUATION PHYSIQUE CLASSE-EDU V2
         </motion.div>
 
@@ -99,10 +96,10 @@ export function LandingPage({ onLaunchSimulator }: LandingPageProps) {
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.7, delay: 0.1 }}
-          className="text-4xl sm:text-5xl md:text-7xl font-sans font-bold tracking-tight text-zinc-100 max-w-4xl leading-[1.1]"
+          className="text-4xl sm:text-5xl md:text-7xl font-sans font-bold tracking-tight text-zinc-100 max-w-4xl leading-[1.1] text-balance"
         >
-          NUKEMAP <span className="text-red-600">EDU</span>
-          <span className="block text-transparent bg-clip-text bg-gradient-to-r from-red-500 to-red-800 text-2xl sm:text-3xl md:text-5xl font-mono tracking-wide mt-3 font-semibold">
+          NUKEMAP <span className="text-red-500">EDU</span>
+          <span className="block text-transparent bg-clip-text bg-gradient-to-r from-red-400 to-red-600 text-2xl sm:text-3xl md:text-5xl font-mono tracking-wide mt-3 font-semibold">
             VECTEURS &amp; PROPAGATION 3D
           </span>
         </motion.h1>
@@ -218,7 +215,7 @@ export function LandingPage({ onLaunchSimulator }: LandingPageProps) {
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 md:gap-6">
             
             {/* Feature 1 */}
-            <div className="flex flex-col bg-zinc-950 border border-zinc-905 p-6 rounded-xl hover:border-red-900/50 hover:shadow-xl hover:shadow-red-950/20 transition-all duration-300 group">
+            <div className="flex flex-col bg-zinc-950 border border-zinc-800/80 p-6 rounded-xl hover:border-red-900/60 hover:shadow-xl hover:shadow-red-950/20 transition-all duration-300 group">
               <div className="w-10 h-10 rounded-lg bg-zinc-900 flex items-center justify-center border border-zinc-800 text-red-500 group-hover:scale-110 transition-transform">
                 <Radio className="w-5 h-5" />
               </div>
@@ -229,7 +226,7 @@ export function LandingPage({ onLaunchSimulator }: LandingPageProps) {
             </div>
 
             {/* Feature 2 */}
-            <div className="flex flex-col bg-zinc-950 border border-zinc-905 p-6 rounded-xl hover:border-red-900/50 hover:shadow-xl hover:shadow-red-950/20 transition-all duration-300 group">
+            <div className="flex flex-col bg-zinc-950 border border-zinc-800/80 p-6 rounded-xl hover:border-red-900/60 hover:shadow-xl hover:shadow-red-950/20 transition-all duration-300 group">
               <div className="w-10 h-10 rounded-lg bg-zinc-900 flex items-center justify-center border border-zinc-800 text-red-500 group-hover:scale-110 transition-transform">
                 <Zap className="w-5 h-5" />
               </div>
@@ -240,7 +237,7 @@ export function LandingPage({ onLaunchSimulator }: LandingPageProps) {
             </div>
 
             {/* Feature 3 */}
-            <div className="flex flex-col bg-zinc-950 border border-zinc-905 p-6 rounded-xl hover:border-red-900/50 hover:shadow-xl hover:shadow-red-950/20 transition-all duration-300 group">
+            <div className="flex flex-col bg-zinc-950 border border-zinc-800/80 p-6 rounded-xl hover:border-red-900/60 hover:shadow-xl hover:shadow-red-950/20 transition-all duration-300 group">
               <div className="w-10 h-10 rounded-lg bg-zinc-900 flex items-center justify-center border border-zinc-800 text-red-500 group-hover:scale-110 transition-transform">
                 <Waves className="w-5 h-5" />
               </div>
@@ -251,7 +248,7 @@ export function LandingPage({ onLaunchSimulator }: LandingPageProps) {
             </div>
 
             {/* Feature 4 */}
-            <div className="flex flex-col bg-zinc-950 border border-zinc-905 p-6 rounded-xl hover:border-red-900/50 hover:shadow-xl hover:shadow-red-950/20 transition-all duration-300 group">
+            <div className="flex flex-col bg-zinc-950 border border-zinc-800/80 p-6 rounded-xl hover:border-red-900/60 hover:shadow-xl hover:shadow-red-950/20 transition-all duration-300 group">
               <div className="w-10 h-10 rounded-lg bg-zinc-900 flex items-center justify-center border border-zinc-800 text-red-500 group-hover:scale-110 transition-transform">
                 <Wind className="w-5 h-5" />
               </div>
@@ -386,15 +383,16 @@ export function LandingPage({ onLaunchSimulator }: LandingPageProps) {
               >
                 <button
                   type="button"
+                  aria-expanded={activeFaq === idx}
                   onClick={() => setActiveFaq(activeFaq === idx ? null : idx)}
-                  className="w-full flex justify-between items-center p-5 text-left text-sm md:text-base font-bold text-zinc-200 font-sans hover:text-white transition-colors cursor-pointer"
+                  className="w-full min-h-11 flex justify-between items-center p-5 text-left text-sm md:text-base font-bold text-zinc-200 font-sans hover:text-white transition-colors cursor-pointer"
                 >
                   <span>{faq.q}</span>
-                  <ChevronDown className={`w-4 h-4 text-zinc-500 transition-transform duration-300 ${activeFaq === idx ? 'rotate-180 text-red-500' : ''}`} />
+                  <ChevronDown className={`w-4 h-4 text-zinc-400 transition-transform duration-300 shrink-0 ${activeFaq === idx ? 'rotate-180 text-red-500' : ''}`} />
                 </button>
                 
                 {activeFaq === idx && (
-                  <div className="p-5 pt-0 border-t border-zinc-950/50 text-xs md:text-sm text-zinc-400 leading-relaxed font-sans bg-zinc-950/40">
+                  <div className="p-5 pt-0 border-t border-zinc-800/50 text-xs md:text-sm text-zinc-300 leading-relaxed font-sans bg-zinc-950/40">
                     {faq.a}
                   </div>
                 )}
@@ -408,19 +406,19 @@ export function LandingPage({ onLaunchSimulator }: LandingPageProps) {
       <section className="relative py-20 bg-gradient-to-b from-zinc-950 to-zinc-900 border-t border-zinc-900">
         <div className="max-w-4xl mx-auto px-6 text-center flex flex-col items-center z-10 relative">
           <div className="w-12 h-12 rounded-full bg-red-950/30 border border-red-900/40 flex items-center justify-center text-red-500 mb-6">
-            <Shield className="w-6 h-6 animate-pulse" />
+            <Shield className="w-6 h-6" />
           </div>
-          <h2 className="text-3xl md:text-5xl font-sans font-bold text-white tracking-tight leading-tight">
-            Accédez à la console de commandement militaire
+          <h2 className="text-3xl md:text-5xl font-sans font-bold text-white tracking-tight leading-tight text-balance">
+            Accédez à la console de commandement scientifique
           </h2>
-          <p className="mt-4 text-zinc-400 text-sm max-w-xl leading-relaxed">
+          <p className="mt-4 text-zinc-300 text-sm max-w-xl leading-relaxed">
             Configurez n'importe quelle charge historique, lancez les vecteurs ICBM, et observez sans filtre le bilan de crise et la dispersion elliptique des retombées.
           </p>
           <div className="mt-8 w-full sm:w-auto">
             <button
               type="button"
               onClick={onLaunchSimulator}
-              className="flex items-center justify-center gap-2 w-full sm:w-auto bg-red-600 hover:bg-red-500 text-white font-mono text-xs font-bold tracking-widest uppercase p-4.5 px-10 rounded-lg shadow-2xl transition-all duration-300 cursor-pointer active:scale-95"
+              className="flex items-center justify-center gap-2 w-full sm:w-auto bg-red-600 hover:bg-red-500 text-white font-mono text-xs font-bold tracking-widest uppercase py-4 px-10 rounded-lg shadow-2xl transition-all duration-300 cursor-pointer active:scale-95"
             >
               ÉVALUER L'IMPACT DE GRANDE ÉCHELLE
               <ArrowRight className="w-4 h-4" />
@@ -429,16 +427,16 @@ export function LandingPage({ onLaunchSimulator }: LandingPageProps) {
         </div>
       </section>
 
-      {/* Humble Footer */}
+      {/* Footer */}
       <footer className="relative border-t border-zinc-900 py-8 bg-zinc-950/80">
-        <div className="max-w-7xl mx-auto px-6 flex flex-col sm:flex-row justify-between items-center gap-4 text-[10px] font-mono text-zinc-500 uppercase">
+        <div className="max-w-7xl mx-auto px-6 flex flex-col sm:flex-row justify-between items-center gap-4 text-[11px] font-mono text-zinc-400 uppercase">
           <div className="flex items-center gap-2">
             <span>© 2026 NUKEMAP EDU PROJECT</span>
             <span>•</span>
-            <span className="text-red-950 font-bold">STATUS: OPERATIONNAL</span>
+            <span className="text-zinc-300 font-bold">MODÉLISATION PÉDAGOGIQUE 3D</span>
           </div>
           <div className="flex items-center gap-4">
-            <span className="text-zinc-600">Base Physique de Glasstone &amp; Dolan (1977)</span>
+            <span className="text-zinc-400">Base Physique de Glasstone &amp; Dolan (1977)</span>
           </div>
         </div>
       </footer>

@@ -20,8 +20,12 @@
 - **Référencement Social** : Métadonnées SEO injectées pour un partage social optimisé.
 - **Versioning** : Système de suivi de version prêt pour les futures mises à jour.
 
-## 4. Recommandations Restantes (Zones à améliorer)
-- **Génération complète des icônes** : Générer toutes les tailles requises (16x16...512x512) et mettre à jour le `manifest.json`.
-- **Stratégie de cache avancée** : Affiner le Service Worker pour une gestion plus fine des ressources dynamiques (ex: API cartographiques Deck.gl/MapLibre).
+## 4. Correctifs Appliqués (Audit 2026-11-20)
+- **Manifeste & Balises HTML** : Ajout de `"id": "/"`, `"lang": "fr"`, alignement du format réel des icônes (`1024x1024`, `image/jpeg`), harmonisation de `<title>`, `description` et `theme-color` (`#09090b`) entre `index.html`, `manifest.json` et `metadata.json`.
+- **Service Worker (`nukemap-edu-v3`)** : Exclusion stricte des routes de développement Vite (`/@vite`, `/@react-refresh`, `/src/`, `node_modules`) pour éviter l'interception dev, stratégie Network-First pour la navigation HTML et Stale-While-Revalidate pour les assets statiques.
+- **Ergonomie Notifications (`PWAController.tsx`)** : Positionnement des bannières d'installation et de mise à jour en haut sur mobile (`top-16`) afin d'éviter tout conflit avec le tiroir inférieur, avec boutons de fermeture accessibles et nettoyage propre des écouteurs d'événements.
+
+## 5. Recommandations Restantes (Zones à améliorer)
+- **Génération d'icônes PNG multi-tailles** : Convertir les icônes JPEG `1024x1024` en véritables PNG `192x192` et `512x512` (y compris variante `maskable`) pour une compatibilité maximale sur tous les lanceurs mobiles.
 - **Page Notes de Version** : Créer l'interface utilisateur dédiée pour afficher l'historique des changements lors d'une mise à jour détectée.
-- **Test Hors Ligne** : Valider rigoureusement le comportement métier en condition de perte de réseau totale (persistance immédiate des données critiques).
+- **Test Hors Ligne Complet** : Valider rigoureusement le comportement métier en condition de perte de réseau totale (persistance immédiate des données critiques).

@@ -101,4 +101,13 @@ Le projet est développé sur une base d'application moderne réactive Single Pa
     * Rédaction des règles SEO complètes (`/seo.md`) et de la charte de Style "Bunker Chic / Brutalisme" (`/charte_graphique.md`).
   * **Impact** : La console de commande devient un produit fini, accessible et séduisant pour une double audience : de l'étudiant curieux à l'analyste de défense passive confirmé.
 
+* **2026-11-20 — Audit Global & Correctifs Cartographie, Mobile, Physique et PWA**
+  * **Modification** : Résolution complète des défauts de rendu WebGL/MapLibre, ergonomie responsive, cohérence des calculs physiques, accessibilité et intégration PWA.
+  * **Détail** :
+    * **Cartographie & WebGL** : Migration du worker MapLibre vers le bundle local Vite (`maplibre-gl-worker.mjs?url`), passage des fonds gratuits par défaut sur `OpenFreeMap` (`dark` / `positron`) et `ESRI World Imagery` avec repli automatique en cas d'erreur Mapbox, et filtrage de la persistance `viewState` pour éviter les dérives de longitude lors du redimensionnement.
+    * **Ergonomie Mobile & UI** : Barre supérieure unifiée dans `Map.tsx`, décalage CSS responsive de `.maplibregl-ctrl-top-right` sous la barre sur mobile, tiroir inférieur mobile replié par défaut (`88px` non rogné), barre compacte `télémétrie + Chronologie` dockée au-dessus du tiroir, et correction de l'alignement `IMPACT CONFIRMÉ` sur desktop.
+    * **Logique Physique & Qualité** : Centralisation de `resolveVectorFlightProfile` et `calculateFalloutPlumeLengthKm` dans `nuclearMath.ts`, bornage des puissances `>= 0.01 kt`, alignement de `dirty_bomb` (`0.1 kt`), passage au calcul Haversine dans `TargetConfigSection`, passage de `coastalDepthM` et `manningN` à `calculateTsunamiMetrics` dans `EnvironmentSection`, suppression de `window.alert` au profit d'alertes inline accessibles (`role="alert"`), et remplacement des classes Tailwind inexistantes.
+    * **PWA & Tests** : Mise à jour de `/public/manifest.json`, `/index.html`, et `/public/service-worker.js` (`v3` excluant les routes Vite dev), ainsi que création/extension des tests unitaires `node:test` et `vitest`.
+  * **Impact** : Zéro erreur console, affichage cartographique et champignon 3D opérationnels sur desktop et mobile, cohérence mathématique bout-en-bout et interface tactile conforme.
+
 

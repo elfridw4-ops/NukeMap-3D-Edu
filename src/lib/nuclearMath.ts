@@ -1,4 +1,4 @@
-import { BlastRadii, WeaponConfig, DeliveryVector, DeliveryType, CasualtyReport } from "../types";
+import { BlastRadii, WeaponConfig, DeliveryVector, DeliveryType, CasualtyReport, LaunchParams } from "../types";
 import { AutomaticGeoData } from "./geoDataFetcher";
 
 /**
@@ -7,39 +7,40 @@ import { AutomaticGeoData } from "./geoDataFetcher";
  * It also computes craters based on Dolan and surface mechanical models.
  */
 export const calculateBlastRadii = (yieldKt: number, explosionType: 'airburst' | 'surface', manningN: number = 0.050): BlastRadii => {
+    const safeYield = Math.max(0.01, Number.isFinite(yieldKt) ? yieldKt : 0.01);
     // 1. Crater (only created in surface burst)
     // Dolan empirical model: R_crater = 45 * Y^(0.33) in m. We use manning n as soil hardness proxy.
     // Higher n (rougher terrain/rock) -> smaller crater. Lower n (smooth plains/soft soil) -> larger crater.
     const soilHardnessFactor = Math.pow(0.050 / Math.max(0.010, manningN), 0.3);
     const craterR_m = explosionType === 'surface' 
-        ? 45 * Math.pow(yieldKt, 0.33) * soilHardnessFactor
+        ? 45 * Math.pow(safeYield, 0.33) * soilHardnessFactor
         : 0;
 
     // 2. Fireball radius (meters)
     // Glasstone & Dolan: R = 0.28 * Y^0.32 in km for air burst, multiplied by ~1.3 for surface
-    const fireballR_km = 0.28 * Math.pow(yieldKt, 0.32) * (explosionType === 'surface' ? 1.3 : 1.0);
+    const fireballR_km = 0.28 * Math.pow(safeYield, 0.32) * (explosionType === 'surface' ? 1.3 : 1.0);
 
     // 3. Heavy Blast overpressure circle (20 psi - total destruction)
     // R = 0.28 * Y^0.33 in km
-    const heavyBlastR_km = 0.28 * Math.pow(yieldKt, 0.33) * (explosionType === 'surface' ? 0.8 : 1.0);
+    const heavyBlastR_km = 0.28 * Math.pow(safeYield, 0.33) * (explosionType === 'surface' ? 0.8 : 1.0);
 
     // 4. Moderate Blast overpressure circle (5 psi - residential collapse)
     // R = 0.71 * Y^0.33 in km
-    const moderateBlastR_km = 0.71 * Math.pow(yieldKt, 0.33) * (explosionType === 'surface' ? 0.8 : 1.0);
+    const moderateBlastR_km = 0.71 * Math.pow(safeYield, 0.33) * (explosionType === 'surface' ? 0.8 : 1.0);
 
     // 5. Light Blast overpressure circle (1-2 psi - glass shattering)
     // R = 1.61 * Y^0.33 in km
-    const lightBlastR_km = 1.61 * Math.pow(yieldKt, 0.33) * (explosionType === 'surface' ? 0.8 : 1.0);
+    const lightBlastR_km = 1.61 * Math.pow(safeYield, 0.33) * (explosionType === 'surface' ? 0.8 : 1.0);
 
     // 6. Thermal radiation burns (meters) using Dolan model for atmospheric transmission
     // 3rd degree (severe skin necrosis, 50% fatalities without medical aid)
-    const thermal3rdR_km = 1.20 * Math.pow(yieldKt, 0.40);
+    const thermal3rdR_km = 1.20 * Math.pow(safeYield, 0.40);
 
     // 2nd degree (critical blistering, severe burns)
-    const thermal2ndR_km = 1.55 * Math.pow(yieldKt, 0.40);
+    const thermal2ndR_km = 1.55 * Math.pow(safeYield, 0.40);
 
     // 1st degree (moderate pain, erythema, mild sunburn)
-    const thermal1stR_km = 2.10 * Math.pow(yieldKt, 0.40);
+    const thermal1stR_km = 2.10 * Math.pow(safeYield, 0.40);
 
     return {
         fireball: Math.max(10, fireballR_km * 1000),
@@ -173,7 +174,7 @@ export const WEAPON_PRESETS: WeaponConfig[] = [
         name: "Bombe Sale (Sale / Radiologique)",
         type: "Terrorisme / Sale",
         yieldValue: 0.1,
-        yieldKt: 1.0,
+        yieldKt: 0.1,
         description: "Arme de dispersion de poussières hautement corrosives et de poudres radioactives (Cobalt/Césium).",
         weaponType: "dirty"
     },
@@ -463,20 +464,80 @@ export const calculateCasualtyReport = (
  * Energy in Joules: 1 kt TNT = 4.184 x 10^12 Joules
  */
 export const calculateRichterScale = (yieldKt: number): number => {
-    const energyJoules = yieldKt * 4.184e12;
+    const safeYield = Math.max(0.01, Number.isFinite(yieldKt) ? yieldKt : 0.01);
+    const energyJoules = safeYield * 4.184e12;
     // Gutenberg-Richter log relationship: Mag = (2/3) * log10(E) - 3.2
     const mag = (2 / 3) * Math.log10(energyJoules) - 3.2;
     return parseFloat(mag.toFixed(2));
 };
 
 /**
+ * Canonical ballistic vector profile resolver shared across sidebar, launch sequence, and 3D map trajectory.
+ */
+export interface ResolvedFlightProfile {
+    vectorId: DeliveryType;
+    speedKmh: number;
+    maxRangeKm: number;
+    altitudeKm: number;
+    trajectoryType: 'standard' | 'depressed' | 'cruise';
+    colorHex: string;
+}
+
+const VECTOR_DEFAULTS: Record<string, { speedKmh: number; maxRangeKm: number; altitudeKm: number; colorHex: string }> = {
+    icbm: { speedKmh: 24000, maxRangeKm: 13000, altitudeKm: 1200, colorHex: '#ef4444' },
+    slbm: { speedKmh: 29000, maxRangeKm: 12000, altitudeKm: 1300, colorHex: '#f97316' },
+    bomber: { speedKmh: 1010, maxRangeKm: 11000, altitudeKm: 15, colorHex: '#6366f1' },
+    cruise: { speedKmh: 880, maxRangeKm: 2500, altitudeKm: 0.1, colorHex: '#8b5cf6' },
+    houthi: { speedKmh: 900, maxRangeKm: 2000, altitudeKm: 12, colorHex: '#ec4899' },
+    hypothetical: { speedKmh: 15000, maxRangeKm: 99999, altitudeKm: 100, colorHex: '#22c55e' },
+    custom: { speedKmh: 10000, maxRangeKm: 99999, altitudeKm: 100, colorHex: '#22c55e' },
+};
+
+export const resolveVectorFlightProfile = (launchParams: LaunchParams): ResolvedFlightProfile => {
+    const vectorId = launchParams.vectorId || 'icbm';
+    const defaults = VECTOR_DEFAULTS[vectorId] || VECTOR_DEFAULTS.icbm;
+    const trajectoryType = launchParams.trajectoryType || (vectorId === 'cruise' ? 'cruise' : 'standard');
+
+    const baseSpeed = launchParams.customSpeedKmh !== undefined && launchParams.customSpeedKmh > 0
+        ? launchParams.customSpeedKmh
+        : defaults.speedKmh;
+    const speedKmh = trajectoryType === 'depressed' ? Math.round(baseSpeed * 1.33) : baseSpeed;
+
+    const maxRangeKm = launchParams.customRangeKm !== undefined && launchParams.customRangeKm > 0
+        ? launchParams.customRangeKm
+        : defaults.maxRangeKm;
+
+    const altitudeKm = launchParams.altitudeKm !== undefined && launchParams.altitudeKm >= 0
+        ? launchParams.altitudeKm
+        : defaults.altitudeKm;
+
+    return {
+        vectorId,
+        speedKmh,
+        maxRangeKm,
+        altitudeKm,
+        trajectoryType,
+        colorHex: defaults.colorHex
+    };
+};
+
+/**
+ * Canonical fallout plume length in kilometers shared between 3D map polygon/particles and sidebar gauge.
+ */
+export const calculateFalloutPlumeLengthKm = (heavyBlastRadiusM: number, windSpeedKmh: number): number => {
+    const safeBlastKm = Math.max(0.01, heavyBlastRadiusM / 1000);
+    const safeWind = Math.max(1, Number.isFinite(windSpeedKmh) ? windSpeedKmh : 1);
+    return Math.max(0.1, Math.pow(safeBlastKm, 1.2) * (safeWind / 10 + 1) * 3);
+};
+
+/**
  * Translates weapon energy parameters into visual timelines from T-0 to T+24h.
  */
 export const getSimulationTimeline = (yieldKt: number, radii: BlastRadii, deliveryId: DeliveryType, windSpeedKmh: number): any[] => {
-    const speed = DELIVERY_VECTORS.find(v => v.id === deliveryId)?.velocityKmh || 3000;
     const shockwaveSpeedMps = 343; // sound speed average
     const timeToCoverModerateS = Math.round(radii.moderateBlast / shockwaveSpeedMps);
-    const falloutArrivalMin = Math.round((radii.moderateBlast * 3) / (windSpeedKmh / 60 || 5));
+    const safeWindMPerMin = Math.max(1, windSpeedKmh) * 1000 / 60;
+    const falloutArrivalMin = Math.round((radii.moderateBlast * 3) / safeWindMPerMin);
 
     return [
         {

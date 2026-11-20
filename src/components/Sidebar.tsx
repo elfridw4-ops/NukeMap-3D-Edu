@@ -47,6 +47,8 @@ interface SidebarProps {
   onClearPastStrikes: () => void;
   casualtyReport?: any;
   onMobileCollapsedChange?: (collapsed: boolean) => void;
+  ballisticError?: string | null;
+  onClearBallisticError?: () => void;
 }
 
 export function Sidebar({
@@ -78,9 +80,16 @@ export function Sidebar({
   pastStrikesCount,
   onClearPastStrikes,
   casualtyReport,
-  onMobileCollapsedChange
+  onMobileCollapsedChange,
+  ballisticError,
+  onClearBallisticError
 }: SidebarProps) {
-  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth < 768;
+    }
+    return false;
+  });
 
   // Synchronise l'état vers le parent après le rendu pour éviter une mise à jour pendant le rendu.
   useEffect(() => {
@@ -91,33 +100,37 @@ export function Sidebar({
   const toggleMobileCollapse = () => setIsCollapsed(prev => !prev);
 
   return (
-    <div className={cn(
-      "flex flex-col text-zinc-100 overflow-hidden hide-scrollbar transition-all duration-300 ease-in-out backdrop-blur-xl bg-zinc-950 shadow-2xl",
-      // Desktop left panel layout: 300px fixed width, no rounded corners, fits full-screen height
-      "md:relative md:top-0 md:left-0 md:w-[300px] md:h-screen md:max-h-screen md:rounded-none md:border-r md:border-t-0 md:border-b-0 md:border-l-0 md:border-zinc-800",
-      !isSidebarOpen && "md:w-0 md:opacity-0 md:-translate-x-full md:pointer-events-none",
-      // Mobile style: fixed bottom-sheet
-      "fixed bottom-0 left-0 right-0 w-full rounded-t-3xl border-t border-zinc-800 z-30",
-      isCollapsed ? "h-[75px] max-h-[75px]" : "h-[55vh] md:h-screen"
-    )}>
+    <aside
+      aria-label="Panneau de commande NUKEMAP EDU"
+      className={cn(
+        "flex flex-col text-zinc-100 overflow-hidden hide-scrollbar transition-all duration-300 ease-in-out backdrop-blur-xl bg-zinc-950 shadow-2xl",
+        // Desktop left panel layout: 300px fixed width, no rounded corners, fits full-screen height
+        "md:relative md:top-0 md:left-0 md:w-[300px] md:h-screen md:max-h-screen md:rounded-none md:border-r md:border-t-0 md:border-b-0 md:border-l-0 md:border-zinc-800",
+        !isSidebarOpen && "md:w-0 md:opacity-0 md:-translate-x-full md:pointer-events-none",
+        // Mobile style: fixed bottom-sheet with enough height when collapsed so header + handle never clip
+        "fixed bottom-0 left-0 right-0 w-full rounded-t-2xl border-t border-zinc-800 z-30",
+        isCollapsed ? "h-[88px] max-h-[88px]" : "h-[55dvh] md:h-screen"
+      )}
+    >
       {/* Mobile Drag Handle */}
       <button
         type="button"
         aria-label={isCollapsed ? "Développer le panneau de configuration" : "Réduire le panneau de configuration"}
         aria-expanded={!isCollapsed}
-        className="w-full flex justify-center pt-3 pb-2 md:hidden cursor-pointer shrink-0 min-h-11"
+        className="w-full flex items-center justify-center pt-2 pb-1 md:hidden cursor-pointer shrink-0 min-h-[28px]"
         onClick={toggleMobileCollapse}
       >
-        <div className="w-10 h-1.5 bg-zinc-700/80 rounded-full" />
+        <div className="w-10 h-1 bg-zinc-700 rounded-full" />
       </button>
 
       <div
-        className="px-5 pb-4 md:py-5 md:px-5 border-b border-zinc-800/50 bg-zinc-900/30 flex justify-between items-center shrink-0"
+        className="px-4 pb-2.5 md:py-5 md:px-5 border-b border-zinc-800/60 bg-zinc-900/30 flex justify-between items-center shrink-0"
       >
-        <div>
-          <h1 className="text-xl font-bold font-sans tracking-tight mb-0.5 text-white flex items-center gap-2">
+        <div className="min-w-0">
+          <h1 className="text-lg md:text-xl font-bold font-sans tracking-tight text-white flex items-center gap-2">
             <AlertTriangle className="w-5 h-5 text-red-500 shrink-0" />
-            NUKEMAP <span className="text-[10px] font-mono bg-zinc-800/80 text-zinc-400 px-2 py-0.5 rounded ml-1 border border-zinc-700 hidden sm:inline-block">EDU</span>
+            <span>NUKEMAP</span>
+            <span className="text-[10px] font-mono bg-zinc-800 text-zinc-300 px-1.5 py-0.5 rounded border border-zinc-700">EDU</span>
           </h1>
           <p className="text-[10px] font-mono text-zinc-500 uppercase tracking-widest mt-1 hidden md:block">
             Sys. Command // SIM-NC-01
@@ -128,7 +141,7 @@ export function Sidebar({
           aria-label={isCollapsed ? "Développer le panneau de configuration" : "Réduire le panneau de configuration"}
           aria-expanded={!isCollapsed}
           onClick={toggleMobileCollapse}
-          className="md:hidden text-zinc-400 hover:text-white p-2.5 min-h-11 min-w-11 rounded-full bg-zinc-800/50 transition-colors flex items-center justify-center"
+          className="md:hidden text-zinc-300 hover:text-white min-h-11 min-w-11 rounded-lg bg-zinc-900 border border-zinc-800 hover:border-zinc-700 transition-colors flex items-center justify-center cursor-pointer shrink-0"
         >
           <ChevronUp className={cn("w-5 h-5 transition-transform duration-300", isCollapsed ? "" : "rotate-180")} />
         </button>
@@ -171,6 +184,8 @@ export function Sidebar({
           pastStrikesCount={pastStrikesCount}
           onClearPastStrikes={onClearPastStrikes}
           setWeapon={setWeapon}
+          ballisticError={ballisticError}
+          onClearBallisticError={onClearBallisticError}
         />
 
         {/* Environment & Volatility */}
@@ -193,6 +208,6 @@ export function Sidebar({
         />
 
       </div>
-    </div>
+    </aside>
   );
 }
