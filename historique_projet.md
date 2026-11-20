@@ -110,4 +110,9 @@ Le projet est développé sur une base d'application moderne réactive Single Pa
     * **PWA & Tests** : Mise à jour de `/public/manifest.json`, `/index.html`, et `/public/service-worker.js` (`v3` excluant les routes Vite dev), ainsi que création/extension des tests unitaires `node:test` et `vitest`.
   * **Impact** : Zéro erreur console, affichage cartographique et champignon 3D opérationnels sur desktop et mobile, cohérence mathématique bout-en-bout et interface tactile conforme.
 
-
+* **2026-11-20 — Visualisation Recharts des Pertes Humaines en Fonction de la Distance**
+  * **Modification** : Intégration d'un graphique comparatif en barres empilées dans la section `Bilan Humain & Matériel (Estimatif)`.
+  * **Détail** :
+    * Ajout de `calculateCasualtiesByDistance` et du type `CasualtyDistancePoint` dans `nuclearMath.ts` / `types.ts` pour ventiler exactement les totaux du bilan sur 4 couronnes concentriques croissantes (`Épicentre 20 psi`, `Souffle modéré 5 psi`, `Flux thermique`, `Zone périphérique`).
+    * Création de `src/components/sidebar/CasualtiesByDistanceChart.tsx` avec `Recharts` (`BarChart` mesuré dynamiquement par `ResizeObserver`, axes compacts, légende claire et infobulle détaillée au thème Bunker Chic).
+  * **Impact** : Lecture immédiate de la décroissance et de la répartition des victimes selon la distance à l'épicentre, sans débordement sur panneau desktop (`300px`) ni sur tiroir mobile.

@@ -2,18 +2,21 @@ import React from 'react';
 import { BlastRadii, EnvironmentParams, CasualtyReport } from '../../types';
 import { calculateFalloutPlumeLengthKm } from '../../lib/nuclearMath';
 import { ImpactGauge } from './ImpactGauge';
+import { CasualtiesByDistanceChart } from './CasualtiesByDistanceChart';
 import { AlertTriangle, Building, Activity } from 'lucide-react';
 
 export interface ImpactDashboardSectionProps {
   radii: BlastRadii;
   environmentParams: EnvironmentParams;
   casualtyReport?: CasualtyReport;
+  weaponType?: 'fission' | 'fusion' | 'dirty';
 }
 
 export function ImpactDashboardSection({
   radii,
   environmentParams,
-  casualtyReport
+  casualtyReport,
+  weaponType = 'fission'
 }: ImpactDashboardSectionProps) {
   const falloutPlumeM = calculateFalloutPlumeLengthKm(radii.heavyBlast, environmentParams.windSpeed) * 1000;
 
@@ -108,6 +111,12 @@ export function ImpactDashboardSection({
                <span className="font-mono tabular-nums text-yellow-400">{casualtyReport.radiationExposed.toLocaleString('fr-FR')}</span>
             </div>
           </div>
+
+          <CasualtiesByDistanceChart
+            radii={radii}
+            casualtyReport={casualtyReport}
+            weaponType={weaponType}
+          />
           
           <div className="space-y-2 pt-2 border-t border-red-900/20">
             <h4 className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5"><Building className="w-3.5 h-3.5" /> Infrastructures Détruites</h4>

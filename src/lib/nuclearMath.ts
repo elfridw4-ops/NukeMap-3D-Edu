@@ -1,4 +1,4 @@
-import { BlastRadii, WeaponConfig, DeliveryVector, DeliveryType, CasualtyReport, LaunchParams } from "../types";
+import { BlastRadii, WeaponConfig, DeliveryVector, DeliveryType, CasualtyReport, CasualtyDistancePoint, LaunchParams } from "../types";
 import { AutomaticGeoData } from "./geoDataFetcher";
 
 /**
@@ -457,6 +457,109 @@ export const calculateCasualtyReport = (
         airportsAffected,
         roadsAffected
     };
+};
+
+/**
+ * Répartit exactement un entier positif selon des poids donnés tout en préservant
+ * la somme totale (méthode des plus forts restes), garantissant la cohérence stricte
+ * entre le graphique radial et le bilan global.
+ */
+const distributeByWeights = (total: number, weights: number[]): number[] => {
+    const safeTotal = Math.max(0, Math.round(Number.isFinite(total) ? total : 0));
+    if (safeTotal === 0) {
+        return weights.map(() => 0);
+    }
+
+    const safeWeights = weights.map((w) => Math.max(0, w));
+    const weightSum = safeWeights.reduce((acc, w) => acc + w, 0);
+    if (weightSum <= 0) {
+        return weights.map((_, idx) => (idx === 0 ? safeTotal : 0));
+    }
+
+    const exactShares = safeWeights.map((w) => (safeTotal * w) / weightSum);
+    const floors = exactShares.map((val) => Math.floor(val));
+    let remainder = safeTotal - floors.reduce((acc, val) => acc + val, 0);
+
+    // Trie les indices actifs par reste décimal décroissant pour distribuer l'écart d'arrondi
+    const order = exactShares
+        .map((val, idx) => ({ idx, frac: val - floors[idx], active: safeWeights[idx] > 0 }))
+        .filter((item) => item.active)
+        .sort((a, b) => b.frac - a.frac);
+
+    for (let i = 0; i < remainder && order.length > 0; i++) {
+        floors[order[i % order.length].idx] += 1;
+    }
+
+    return floors;
+};
+
+/**
+ * Formate un rayon en kilomètres de manière compacte pour l'axe X du graphique (l'unité km figure en en-tête).
+ */
+const formatCompactKm = (km: number): string => {
+    if (km < 1) return `${km.toFixed(2)}`;
+    if (km < 10) return `${km.toFixed(1)}`;
+    return `${Math.round(km)}`;
+};
+
+/**
+ * Formate une plage de distance lisible en français pour l'infobulle détaillée.
+ */
+const formatRangeKm = (minKm: number, maxKm: number): string => {
+    const fmt = (v: number) => (v === 0 ? '0' : v < 1 ? v.toFixed(2) : v < 10 ? v.toFixed(1) : Math.round(v).toString());
+    return `${fmt(minKm)} – ${fmt(maxKm)} km`;
+};
+
+/**
+ * Ventile les pertes humaines estimées (mortalité, blessés graves, blessés légers)
+ * sur 4 couronnes concentriques croissantes autour du point d'impact (Ground Zero).
+ */
+export const calculateCasualtiesByDistance = (
+    radii: BlastRadii,
+    report: CasualtyReport,
+    weaponType: 'fission' | 'fusion' | 'dirty' = 'fission'
+): CasualtyDistancePoint[] => {
+    // Calcul de bornes strictement croissantes même pour de très faibles puissances ou tirs en surface
+    const r1 = Math.max(0.05, Math.max(radii.fireball, radii.heavyBlast) / 1000);
+    const r2 = Math.max(r1 + 0.05, radii.moderateBlast / 1000);
+    const r3 = Math.max(r2 + 0.05, Math.max(radii.thermal2nd, radii.thermal3rd) / 1000);
+    const r4 = Math.max(r3 + 0.05, Math.max(radii.lightBlast, radii.thermal1st) / 1000);
+
+    const isDirty = weaponType === 'dirty';
+
+    // Profils de répartition par anneau selon la physique de l'arme (cohérents avec calculateCasualtyReport)
+    const fatalWeights = isDirty ? [0.65, 0.25, 0.10, 0] : [0.72, 0.23, 0.05, 0];
+    const graveWeights = isDirty ? [0.25, 0.35, 0.25, 0.15] : [0.12, 0.48, 0.30, 0.10];
+    const lightWeights = isDirty ? [0.10, 0.22, 0.30, 0.38] : [0.04, 0.16, 0.32, 0.48];
+
+    const fatalitiesByBand = distributeByWeights(report.fatalities, fatalWeights);
+    const graveByBand = distributeByWeights(report.graveInjures, graveWeights);
+    const lightByBand = distributeByWeights(report.lightInjures, lightWeights);
+
+    const bands = [
+        { zoneId: 'core', zoneName: 'Épicentre (20 psi)', min: 0, max: r1 },
+        { zoneId: 'moderate', zoneName: 'Souffle modéré (5 psi)', min: r1, max: r2 },
+        { zoneId: 'thermal', zoneName: 'Flux thermique (2e–3e°)', min: r2, max: r3 },
+        { zoneId: 'light', zoneName: 'Zone périphérique (1–2 psi)', min: r3, max: r4 },
+    ];
+
+    return bands.map((band, idx) => {
+        const fatalities = fatalitiesByBand[idx];
+        const graveInjures = graveByBand[idx];
+        const lightInjures = lightByBand[idx];
+        return {
+            zoneId: band.zoneId,
+            distanceLabel: `≤${formatCompactKm(band.max)}`,
+            rangeLabel: formatRangeKm(band.min, band.max),
+            zoneName: band.zoneName,
+            minRadiusKm: parseFloat(band.min.toFixed(2)),
+            maxRadiusKm: parseFloat(band.max.toFixed(2)),
+            fatalities,
+            graveInjures,
+            lightInjures,
+            total: fatalities + graveInjures + lightInjures,
+        };
+    });
 };
 
 /**

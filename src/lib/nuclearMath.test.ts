@@ -3,6 +3,7 @@ import {
   calculateBlastRadii,
   calculateTsunamiMetrics,
   calculateCasualtyReport,
+  calculateCasualtiesByDistance,
   calculateRichterScale,
   resolveVectorFlightProfile,
   calculateFalloutPlumeLengthKm,
@@ -104,5 +105,31 @@ describe('calculateCasualtyReport', () => {
     expect(r1.fatalities).toBeGreaterThanOrEqual(0);
     expect(r1.hospitalsAffected).toBeGreaterThanOrEqual(0);
     expect(r1).toEqual(r2);
+  });
+
+  it('splits casualties across 4 strictly increasing distance bands matching report totals', () => {
+    const radii = calculateBlastRadii(475, 'airburst');
+    const report = calculateCasualtyReport(48.8566, 2.3522, radii, 'fusion', null);
+    const points = calculateCasualtiesByDistance(radii, report, 'fusion');
+
+    expect(points).toHaveLength(4);
+    expect(points[1].maxRadiusKm).toBeGreaterThan(points[0].maxRadiusKm);
+    expect(points[2].maxRadiusKm).toBeGreaterThan(points[1].maxRadiusKm);
+    expect(points[3].maxRadiusKm).toBeGreaterThan(points[2].maxRadiusKm);
+
+    expect(points.reduce((acc, p) => acc + p.fatalities, 0)).toBe(report.fatalities);
+    expect(points.reduce((acc, p) => acc + p.graveInjures, 0)).toBe(report.graveInjures);
+    expect(points.reduce((acc, p) => acc + p.lightInjures, 0)).toBe(report.lightInjures);
+    expect(points[0].fatalities).toBeGreaterThan(points[3].fatalities);
+  });
+
+  it('handles dirty bomb profiles and zero casualties safely', () => {
+    const radii = calculateBlastRadii(0.1, 'airburst');
+    const dirtyReport = calculateCasualtyReport(48.8566, 2.3522, radii, 'dirty', null);
+    const dirtyPoints = calculateCasualtiesByDistance(radii, dirtyReport, 'dirty');
+    expect(dirtyPoints.reduce((acc, p) => acc + p.lightInjures, 0)).toBe(dirtyReport.lightInjures);
+
+    const emptyPoints = calculateCasualtiesByDistance(radii, { ...dirtyReport, fatalities: 0, graveInjures: 0, lightInjures: 0 }, 'fission');
+    expect(emptyPoints.every((p) => p.total === 0)).toBe(true);
   });
 });

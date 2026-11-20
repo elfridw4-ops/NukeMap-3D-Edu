@@ -9,6 +9,7 @@
 * [x] **Modèle Physique Glasstone** : Calcul des ondes barométriques découpées par seuils de pression (20 psi, 5 psi, 1-2 psi) et par isothermes thermiques de brûlures (1er, 2ème et 3ème degré).
 * [x] **Calculateur de Tsunami & Shoaling** : Estimation géologique avec affichage dynamique du graphique d'inondation côtière.
 * [x] **Indicateurs Géographiques Automatiques (Module `geoDataFetcher`)** : Récupération en temps réel des altitudes et pentes (Open-Meteo DEM), de la densité de population urbaine et comptage des hôpitaux, écoles, universités et zones industrielles à moins de 3km de l'impact (OpenStreetMap Overpass). Ajustement automatique de l'amortissement du terrain.
+* [x] **Graphique Comparatif des Pertes par Distance (`Recharts`)** : Intégration du composant `CasualtiesByDistanceChart` et de `calculateCasualtiesByDistance` dans le bilan humain pour comparer en barres empilées (mortalité, blessés graves, blessés légers) les pertes estimées sur 4 couronnes radiales croissantes.
 
 ## Bogues corrigés
 * [x] **Bogue Deck.gl `{id: 'thermal-layer'}`** : Correction de l'erreur `accessor "getRadius" is not a function` provoquée par la valeur indéfinie `radii.thermal`. Standardisation envers des fonctions accesseurs pures pour tous les cercles d'ondes barométriques et thermiques.

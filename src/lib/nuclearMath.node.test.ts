@@ -4,6 +4,7 @@ import {
   calculateBlastRadii,
   calculateTsunamiMetrics,
   calculateCasualtyReport,
+  calculateCasualtiesByDistance,
   calculateRichterScale,
   resolveVectorFlightProfile,
   calculateFalloutPlumeLengthKm,
@@ -80,4 +81,30 @@ test('calculateCasualtyReport returns deterministic results without nearbyCityDa
   const r1 = calculateCasualtyReport(48.8566, 2.3522, radii, 'fission', null);
   const r2 = calculateCasualtyReport(48.8566, 2.3522, radii, 'fission', null);
   assert.deepEqual(r1, r2);
+});
+
+test('calculateCasualtiesByDistance preserves exact totals across 4 strictly ordered radial bands', () => {
+  for (const [yieldKt, mode, type] of [
+    [0.02, 'surface', 'fission'],
+    [20, 'airburst', 'fission'],
+    [50000, 'airburst', 'fusion'],
+    [0.1, 'airburst', 'dirty'],
+  ] as const) {
+    const radii = calculateBlastRadii(yieldKt, mode);
+    const report = calculateCasualtyReport(48.8566, 2.3522, radii, type, null);
+    const points = calculateCasualtiesByDistance(radii, report, type);
+
+    assert.equal(points.length, 4);
+    for (let i = 1; i < points.length; i++) {
+      assert.ok(points[i].maxRadiusKm > points[i - 1].maxRadiusKm);
+    }
+
+    const sumFatal = points.reduce((s, p) => s + p.fatalities, 0);
+    const sumGrave = points.reduce((s, p) => s + p.graveInjures, 0);
+    const sumLight = points.reduce((s, p) => s + p.lightInjures, 0);
+
+    assert.equal(sumFatal, report.fatalities);
+    assert.equal(sumGrave, report.graveInjures);
+    assert.equal(sumLight, report.lightInjures);
+  }
 });

@@ -100,3 +100,16 @@ export interface CasualtyReport {
     airportsAffected: number;
     roadsAffected: number;
 }
+
+export interface CasualtyDistancePoint {
+    zoneId: string;
+    distanceLabel: string;
+    rangeLabel: string;
+    zoneName: string;
+    minRadiusKm: number;
+    maxRadiusKm: number;
+    fatalities: number;
+    graveInjures: number;
+    lightInjures: number;
+    total: number;
+}

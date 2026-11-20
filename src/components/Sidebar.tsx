@@ -205,6 +205,7 @@ export function Sidebar({
           radii={radii}
           environmentParams={environmentParams}
           casualtyReport={casualtyReport}
+          weaponType={weapon.weaponType}
         />
 
       </div>
