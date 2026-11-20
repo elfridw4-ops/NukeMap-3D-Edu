@@ -356,7 +356,8 @@ export const calculateTsunamiMetrics = (
 };
 
 /**
- * Calculates human and layout casualties using demographics weighted by blast radii rings.
+ * Calcule le bilan humain et matériel à partir des anneaux d'ondes de choc/thermiques
+ * de Glasstone & Dolan et de la provenance démographique/infrastructures vérifiée.
  */
 export const calculateCasualtyReport = (
     lat: number,
@@ -365,85 +366,131 @@ export const calculateCasualtyReport = (
     weaponType: 'fission' | 'fusion' | 'dirty',
     nearbyCityData: AutomaticGeoData | null
 ): CasualtyReport => {
-    // 1. Resolve population profile
-    let baseDensity = 4500; // default dense urban area
-    let cityName = "Zone Cible";
-    let totalUrbanPopulation = 1200000;
-    
-    let baseHospitals = 10;
-    let baseSchools = 40;
+    const physicsModel = 'Glasstone & Dolan (1977) — The Effects of Nuclear Weapons';
+
+    // 0. Zone maritime ou inhabitée confirmée : aucune victime civile ni infrastructure terrestre inventée
+    const isUninhabitedWater = Boolean(
+        nearbyCityData &&
+        (nearbyCityData.placeType === 'water' ||
+            nearbyCityData.provenance?.populationStatus === 'water-uninhabited' ||
+            nearbyCityData.population === 0)
+    );
+
+    if (isUninhabitedWater && nearbyCityData) {
+        return {
+            populationTotal: 0,
+            populationDensity: 0,
+            fatalities: 0,
+            graveInjures: 0,
+            lightInjures: 0,
+            radiationExposed: 0,
+            hospitalsAffected: 0,
+            schoolsAffected: 0,
+            airportsAffected: 0,
+            roadsAffected: 0,
+            dataProvenance: nearbyCityData.provenance ?? {
+                physicsModel,
+                populationStatus: 'water-uninhabited',
+                populationSource: 'Zone Maritime / Océanique (Inhabitée)',
+                infrastructureStatus: 'water-uninhabited',
+                infrastructureSource: 'Zone Maritime (0 infrastructure civile)',
+                weatherElevationSource: 'Open-Meteo / Modèle marin',
+            },
+        };
+    }
+
+    // 1. Résolution du profil démographique et de sa provenance réelle
+    let baseDensity = 2400;
+    let totalUrbanPopulation = 350000;
+    let baseHospitals = 4;
+    let baseSchools = 18;
+    let dataProvenance: CasualtyReport['dataProvenance'];
 
     if (nearbyCityData && nearbyCityData.population > 0) {
         baseDensity = nearbyCityData.densityValue;
         totalUrbanPopulation = nearbyCityData.population;
-        cityName = nearbyCityData.cityName;
         baseHospitals = nearbyCityData.hospitals;
         baseSchools = nearbyCityData.schools;
+        dataProvenance = nearbyCityData.provenance ?? {
+            physicsModel,
+            populationStatus: 'verified-reference',
+            populationSource: nearbyCityData.populationSource || 'Base de référence locale',
+            infrastructureStatus: nearbyCityData.infrastructureDetected ? 'verified-api' : 'fallback',
+            infrastructureSource: nearbyCityData.infrastructureDetected
+                ? 'OpenStreetMap Nominatim (rayon 3 km)'
+                : 'Estimation statistique locale',
+            weatherElevationSource: 'Open-Meteo DEM & Météo',
+        };
     } else {
-        // Pseudo-random but consistent coordinate-based population mapping (WorldPop integration proxy)
+        // Repli purement déterministe sans aucune attribution abusive à ONU/WorldPop
         const densitySeed = Math.abs(Math.sin(lat) * Math.cos(lng));
         if (densitySeed < 0.15) {
-            baseDensity = 80; // ocean / desert / low density rural
+            baseDensity = 80;
             totalUrbanPopulation = 5000;
             baseHospitals = 0; baseSchools = 1;
         } else if (densitySeed < 0.4) {
-            baseDensity = 650; // suburb / small town
+            baseDensity = 650;
             totalUrbanPopulation = 85000;
             baseHospitals = 1; baseSchools = 5;
         } else if (densitySeed < 0.8) {
-            baseDensity = 3200; // medium urban center
+            baseDensity = 3200;
             totalUrbanPopulation = 450000;
             baseHospitals = 4; baseSchools = 20;
         } else {
-            baseDensity = 11000; // dense metropolis node
-            totalUrbanPopulation = 6200000;
-            baseHospitals = 15; baseSchools = 80;
+            baseDensity = 11000;
+            totalUrbanPopulation = 3200000;
+            baseHospitals = 12; baseSchools = 60;
         }
+        dataProvenance = {
+            physicsModel,
+            populationStatus: 'fallback',
+            populationSource: 'Estimation topographique locale (sans contexte géodonnées)',
+            infrastructureStatus: 'fallback',
+            infrastructureSource: 'Estimation statistique locale (hors requête OSM)',
+            weatherElevationSource: 'Paramètres par défaut',
+        };
     }
 
-    // 2. Compute overlapping ring casualty integration areas (in km2)
-    // - Fireball & 20 psi overpressure (98% mortality)
+    // 2. Intégration concentrique des anneaux de dommages (en km²)
+    // Boule de feu & surpression lourde 20 psi (mortalité immédiate 98 %)
     const fatalRadiusKm = Math.max(radii.fireball, radii.heavyBlast) / 1000;
     const areaFatalKm2 = Math.PI * fatalRadiusKm * fatalRadiusKm;
 
-    // - Moderate 5 psi & 3rd degree burn (50% mortality, 50% severe injuries)
+    // Surpression modérée 5 psi & brûlures thermiques 3e degré
     const severeRadiusKm = Math.max(radii.moderateBlast, radii.thermal3rd) / 1000;
     const areaSevereKm2 = Math.max(0, (Math.PI * severeRadiusKm * severeRadiusKm) - areaFatalKm2);
 
-    // - Light blast 1-2 psi & 1st/2nd degree burn (10% severe injuries, 70% light injuries)
+    // Surpression légère 1–2 psi & brûlures 1er degré
     const lightRadiusKm = Math.max(radii.lightBlast, radii.thermal1st) / 1000;
     const areaLightKm2 = Math.max(0, (Math.PI * lightRadiusKm * lightRadiusKm) - (areaFatalKm2 + areaSevereKm2));
 
-    // Calculate initial raw metrics based on population densities inside circles
     let fatalities = Math.min(totalUrbanPopulation, areaFatalKm2 * baseDensity * 0.98);
     let graveInjures = Math.min(totalUrbanPopulation - fatalities, areaSevereKm2 * baseDensity * 0.45);
     let lightInjures = Math.min(totalUrbanPopulation - fatalities - graveInjures, areaLightKm2 * baseDensity * 0.35);
 
-    // Scaling factor for Dirty bomb (minor flash/blast, high radiation dispersion over time)
+    // Ajustement spécifique pour arme radiologique (« bombe sale »)
     if (weaponType === 'dirty') {
-        fatalities = fatalities * 0.05 + 10; // few blast deaths
+        fatalities = fatalities * 0.05 + 10;
         graveInjures = graveInjures * 0.15 + 150;
-        lightInjures = lightInjures * 1.5 + 1500; // massive panic & low-exposure acute cases
+        lightInjures = lightInjures * 1.5 + 1500;
     }
 
-    // Rounding
     fatalities = Math.ceil(fatalities);
     graveInjures = Math.ceil(graveInjures);
     lightInjures = Math.ceil(lightInjures);
 
-    // Fallout exposure metrics (length-wind correlated)
     const radiationExposed = Math.ceil(baseDensity * 2.5 * (weaponType === 'dirty' ? 120 : 45));
 
-    // Dynamic infrastructure destruction counters based on radius overlap
-    const maxActiveRadiusKm = lightRadiusKm;
-    // Assume all infrastructure within moderate blast zone is 100% destroyed, and 30% in light blast zone
-    const destructionRatio = Math.min(1.0, (severeRadiusKm * severeRadiusKm * Math.PI) / (100 * 100 * Math.PI)) * 0.7 + Math.min(1.0, (lightRadiusKm * lightRadiusKm * Math.PI) / (100 * 100 * Math.PI)) * 0.3;
-    
-    // Scale against total infrastructure using a simple density heuristic or actual base values
-    const hospitalsAffected = Math.ceil(baseHospitals * destructionRatio);
-    const schoolsAffected = Math.ceil(baseSchools * destructionRatio);
-    const airportsAffected = maxActiveRadiusKm > 15 ? 2 : (maxActiveRadiusKm > 4 ? 1 : 0);
-    const roadsAffected = Math.ceil(Math.min(450, (baseDensity / 120) * (maxActiveRadiusKm * 1.8)));
+    // Ratio d'affectation calibré sur le disque réel d'analyse OSM de 3 km (surface PI * 3²)
+    const scanAreaKm2 = Math.PI * 3 * 3;
+    const severeCoverage = Math.min(1.0, (Math.PI * severeRadiusKm * severeRadiusKm) / scanAreaKm2);
+    const lightCoverage = Math.min(1.0, (Math.PI * lightRadiusKm * lightRadiusKm) / scanAreaKm2);
+    const destructionRatio = Math.min(1.0, severeCoverage * 0.7 + lightCoverage * 0.3);
+
+    const hospitalsAffected = baseHospitals > 0 ? Math.min(baseHospitals, Math.ceil(baseHospitals * destructionRatio)) : 0;
+    const schoolsAffected = baseSchools > 0 ? Math.min(baseSchools, Math.ceil(baseSchools * destructionRatio)) : 0;
+    const airportsAffected = lightRadiusKm > 15 ? 2 : (lightRadiusKm > 4 ? 1 : 0);
+    const roadsAffected = Math.ceil(Math.min(450, (baseDensity / 120) * (lightRadiusKm * 1.8)));
 
     return {
         populationTotal: totalUrbanPopulation,
@@ -455,7 +502,8 @@ export const calculateCasualtyReport = (
         hospitalsAffected,
         schoolsAffected,
         airportsAffected,
-        roadsAffected
+        roadsAffected,
+        dataProvenance,
     };
 };
 

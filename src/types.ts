@@ -88,6 +88,25 @@ export interface SimulationTimelineStep {
     logText: string;
 }
 
+export type DataVerificationStatus =
+    | 'verified-api'
+    | 'verified-reference'
+    | 'water-uninhabited'
+    | 'fallback';
+
+export interface DataProvenance {
+    physicsModel: string;
+    populationStatus: DataVerificationStatus;
+    populationSource: string;
+    populationYear?: string;
+    populationUrl?: string;
+    wikidataId?: string;
+    infrastructureStatus: DataVerificationStatus;
+    infrastructureSource: string;
+    weatherElevationSource: string;
+    verifiedAtIso?: string;
+}
+
 export interface CasualtyReport {
     populationTotal: number;
     populationDensity: number; // inhab / km2
@@ -99,6 +118,7 @@ export interface CasualtyReport {
     schoolsAffected: number;
     airportsAffected: number;
     roadsAffected: number;
+    dataProvenance?: DataProvenance;
 }
 
 export interface CasualtyDistancePoint {
@@ -123,4 +143,3 @@ export interface StrikeBallisticStatus {
     progress: number;
     detonationTimeMs: number | null;
 }
-

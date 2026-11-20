@@ -1,0 +1,34 @@
+# Robots.txt — NUKEMAP EDU
+User-agent: *
+Allow: /
+Allow: /llms.txt
+Allow: /llms-full.txt
+Allow: /sitemap.xml
+Allow: /manifest.json
+
+# Indexation moteurs génératifs (GEO / AI Search)
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-Web
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+Sitemap: https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/sitemap.xml

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'nukemap-edu-v3';
+const CACHE_NAME = 'nukemap-edu-v4';
 const APP_SHELL = ['/', '/index.html', '/manifest.json'];
 
 self.addEventListener('install', (event) => {
@@ -25,12 +25,16 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Ne jamais mettre en cache les modules Vite en mode développement ni les workers à la volée
+  // Ne jamais mettre en cache les modules Vite dev ni intercepter les fichiers d'indexation SEO/GEO
   if (
     url.pathname.startsWith('/@vite') ||
     url.pathname.startsWith('/@react-refresh') ||
     url.pathname.startsWith('/src/') ||
-    url.pathname.includes('node_modules')
+    url.pathname.includes('node_modules') ||
+    url.pathname === '/robots.txt' ||
+    url.pathname === '/sitemap.xml' ||
+    url.pathname === '/llms.txt' ||
+    url.pathname === '/llms-full.txt'
   ) {
     return;
   }

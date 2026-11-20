@@ -1,0 +1,69 @@
+# NUKEMAP EDU — Documentation Scientifique, Géographique & Technique Complète (LLMs Full Context)
+
+> NUKEMAP EDU est une application web progressive (PWA) éducative et scientifique modélisant en 2D/3D les effets physiques d'explosions nucléaires et radiologiques, la balistique intercontinentale, la dispersion atmosphérique des retombées et la génération hydrodynamique de tsunamis côtiers.
+
+URL canonique : https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/
+Console interactive directe : https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/?autostart=1
+Langue principale : Français (`fr`)
+
+---
+
+## 1. Architecture Logicielle & Rendu 3D
+
+- **Frontend** : React 19, TypeScript, Vite, Tailwind CSS v4.
+- **Cartographie & WebGL** : MapLibre GL JS (worker local bundle Vite) couplé à Deck.gl v9 (`ScatterplotLayer`, `ArcLayer`, `PolygonLayer`, `PointCloudLayer` volumétrique de 8 000 points pour le nuage en champignon).
+- **Fonds de carte** : Styles vectoriels libres OpenFreeMap (`dark` / `positron`) et imagerie satellite ESRI World Imagery, avec support optionnel Mapbox GL.
+- **Visualisation analytique** : Recharts (histogramme empilé des pertes par couronne de distance) et graphique d'onde côtière SVG.
+
+---
+
+## 2. Lois d'Échelle Physiques (`src/lib/nuclearMath.ts`)
+
+### 2.1 Surpression, Boule de feu et Thermique (Glasstone & Dolan, 1977)
+Pour une puissance `Y` (en kilotonnes TNT, bornée à `>= 0.01 kt`) et un mode `airburst` (tir aérien optimal) ou `surface` (tir au sol) :
+- **Cratère (surface uniquement)** : `R_crater = 45 * Y^0.33 * (0.050 / manningN)^0.3` mètres (la rugosité `manningN` agit comme proxy de dureté du sol).
+- **Boule de feu** : `R_fireball = 0.28 * Y^0.32 * (surface ? 1.3 : 1.0)` km.
+- **Surpression lourde (20 psi — ruine des structures béton/acier)** : `R_20psi = 0.28 * Y^0.33 * (surface ? 0.8 : 1.0)` km.
+- **Surpression modérée (5 psi — effondrement résidentiel)** : `R_5psi = 0.71 * Y^0.33 * (surface ? 0.8 : 1.0)` km.
+- **Surpression légère (1–2 psi — bris généralisé des vitrages)** : `R_1psi = 1.61 * Y^0.33 * (surface ? 0.8 : 1.0)` km.
+- **Brûlures thermiques (3e, 2e, 1er degré)** : `1.20 * Y^0.40` km, `1.55 * Y^0.40` km, `2.10 * Y^0.40` km.
+- **Équivalent sismique (Gutenberg-Richter)** : `Mag = (2/3) * log10(Y * 4.184e12) - 3.2`.
+
+### 2.2 Arsenal de Référence & Vecteurs Balistiques
+- **Ogives prédéfinies** : Davy Crockett (`0.02 kt`), Bombe sale radiologique (`0.1 kt`), Little Boy (`15 kt`), Fat Man (`20 kt`), W88 Trident (`475 kt`), B83 (`1 200 kt`), Tsar Bomba standard (`50 000 kt`), Tsar Bomba théorique (`100 000 kt`) et ogive personnalisée.
+- **Vecteurs** : Minuteman III ICBM (`24 000 km/h`, portée `13 000 km`, apogée `1 200 km`), Trident II SLBM (`29 000 km/h`), B-2 Spirit (`1 010 km/h`), AGM-109 Tomahawk (`880 km/h`), Quds-1 (`900 km/h`), Planeur Hypersonique (`15 000 km/h`).
+- **Frappes multiples balistiques** : En mode salve multi-cibles, chaque ogive suit une progression et un instant de détonation proportionnels à la distance géodésique Haversine réelle depuis l'origine.
+
+### 2.3 Hydrodynamique Côtière & Tsunami
+Pour les détonations côtières ou maritimes d'énergie effective `>= 20 kt` :
+- **Hauteur initiale** : `H_0 = 0.45 * sqrt(Y_eff)` m.
+- **Shoaling (Loi de Green)** : Amplification proportionnelle à `(d_deep / depth(r))^0.25`.
+- **Run-up & Inondation (Formule de Hunt + friction de Manning `n`)** : Calcul de la distance maximale de pénétration intérieure selon la pente de plage (%) et le coefficient de rugosité urbaine/topographique.
+
+---
+
+## 3. Pipeline de Sources Vérifiées (`Tableau des Impacts` & `Bilan Humain`)
+
+Chaque indicateur affiché dans le panneau latéral repose sur une chaîne de provenance explicite :
+
+1. **Géocodage & Qualification Terre/Mer** :
+   - API OpenStreetMap Nominatim (`reverse?format=json&extratags=1&namedetails=1`).
+   - Détection des étendues d'eau/océans : en zone maritime, la population et les infrastructures civiles affectées sont strictement égales à `0`.
+2. **Démographie & Superficie Vérifiées (par ordre de priorité)** :
+   - **Niveau 1 (`verified-api`)** : Wikidata Action API (`wbgetentities` via l'identifiant `Q*` extrait d'OSM `extratags.wikidata`), lisant les déclarations officielles `P1082` (population recensée + année `P585`) et `P2046` (superficie officielle en km²) pour calculer la densité réelle.
+   - **Niveau 2 (`verified-api`)** : Tag de recensement officiel `extratags.population` d'OpenStreetMap Nominatim (avec année `population:date`).
+   - **Niveau 3 (`verified-reference`)** : Base locale vérifiée de 279 villes (`/src/data/cities.json`), sourcée sur *UN World Urbanization Prospects (2018–2023)* et *Demographia World Urban Areas* (`population`, `area_km2`, bathymétrie GEBCO 2023 / NOAA / JODC, topographie SRTM 30m / Copernicus DEM, atmosphère ERA5 / IGRA).
+   - **Niveau 4 (`fallback`)** : Si aucune source vérifiée ni ville de référence n'est disponible (zone isolée ou hors-ligne), une estimation typologique locale est utilisée et explicitement étiquetée comme repli estimatif (sans fausse attribution ONU/WorldPop).
+3. **Infrastructures Critiques dans un Rayon de 3 km** :
+   - Requêtes spatiales bornées OpenStreetMap Nominatim (`amenity=hospital`, `amenity=school`, zones industrielles) avec filtrage géodésique exact `<= 3 km` et déduplication par `osm_type/osm_id`.
+4. **Topographie & Météo Temps Réel** :
+   - API Open-Meteo Elevation (profil sur 5 points cardinaux à 2 km autour de l'épicentre).
+   - API Open-Meteo Forecast (`current_weather=true`) pour la vitesse et l'orientation du vent réel.
+
+---
+
+## 4. Questions Fréquentes (FAQ)
+
+- **Comment la zone d'impact est-elle calculée ?** Par les équations analytiques de Glasstone & Dolan (1977) corrigées par le type de détonation (`airburst` vs `surface`) et le coefficient de rugosité `manningN`.
+- **Les bilans humains sont-ils vérifiés sur des sources réelles ?** Oui : les populations locales proviennent de Wikidata (`P1082`/`P2046`), d'OpenStreetMap Nominatim ou de la base UN World Urbanization Prospects / Demographia (`cities.json`), et les infrastructures détruites sont dénombrées via OpenStreetMap dans le rayon réel de 3 km, avec badge de traçabilité affiché dans le bilan.
+- **L'application fonctionne-t-elle hors-ligne ?** Oui, NUKEMAP EDU est une PWA installable utilisant un Service Worker (`Cache` app shell + calculs physiques 100 % côté client + synthèse audio Web Audio API sans fichiers externes).

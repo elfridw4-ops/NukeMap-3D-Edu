@@ -3,27 +3,166 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>NUKEMAP EDU</title>
-    <meta name="description" content="Simulateur pédagogique interactif 3D d'impacts nucléaires basé sur les lois d'échelle de Glasstone & Dolan." />
-    <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/jpeg" href="/icon-512.png" />
-    <link rel="apple-touch-icon" href="/icon-512.png" />
+    <title>NUKEMAP EDU — Simulateur Nucléaire 3D &amp; Impacts Physiques</title>
+    <meta
+      name="description"
+      content="Simulateur scientifique et pédagogique 2D/3D d'impacts nucléaires : surpression Glasstone & Dolan, trajectoires balistiques, tsunami côtier et bilan vérifié."
+    />
+    <meta
+      name="robots"
+      content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1"
+    />
+    <meta name="author" content="NUKEMAP EDU Project" />
+    <meta
+      name="keywords"
+      content="simulateur nucléaire 3D, Glasstone Dolan, surpression 20 psi, trajectoire balistique ICBM, tsunami côtier loi de Green, retombées radioactives, géographie pédagogique"
+    />
     <meta name="theme-color" content="#09090b" />
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta property="og:title" content="NUKEMAP EDU" />
-    <meta property="og:description" content="Simulateur pédagogique interactif 3D d'impacts nucléaires basé sur les lois d'échelle de Glasstone & Dolan." />
-    <meta property="og:image" content="/icon-512.png" />
+
+    <!-- Balises de référencement géographique (GEO) & Dublin Core -->
+    <meta name="geo.region" content="FR-IDF" />
+    <meta name="geo.placename" content="Paris, France" />
+    <meta name="geo.position" content="48.8566;2.3522" />
+    <meta name="ICBM" content="48.8566, 2.3522" />
+    <meta name="DC.title" content="NUKEMAP EDU — Simulateur Nucléaire 3D & Impacts Physiques" />
+    <meta name="DC.language" content="fr" />
+
+    <!-- Liens canoniques, multilingues & découverte IA / moteurs -->
+    <link
+      rel="canonical"
+      href="https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/"
+    />
+    <link
+      rel="alternate"
+      hreflang="fr"
+      href="https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/"
+    />
+    <link
+      rel="alternate"
+      hreflang="x-default"
+      href="https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/"
+    />
+    <link rel="alternate" type="text/plain" title="LLMs Context" href="/llms.txt" />
+    <link rel="sitemap" type="application/xml" title="Sitemap" href="/sitemap.xml" />
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/png" href="/icon-512.png" />
+    <link rel="apple-touch-icon" href="/icon-512.png" />
+
+    <!-- Open Graph -->
+    <meta property="og:locale" content="fr_FR" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="NUKEMAP EDU" />
+    <meta
+      property="og:title"
+      content="NUKEMAP EDU — Simulateur Nucléaire 3D & Impacts Physiques"
+    />
+    <meta
+      property="og:description"
+      content="Visualisez en direct les ondes de choc barométriques, trajectoires balistiques, tsunamis côtiers et bilans humains basés sur Wikidata, OpenStreetMap et Open-Meteo."
+    />
+    <meta
+      property="og:url"
+      content="https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/"
+    />
+    <meta
+      property="og:image"
+      content="https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/icon-512.png"
+    />
+    <meta property="og:image:alt" content="NUKEMAP EDU — Console de simulation scientifique 3D" />
+
+    <!-- Twitter Cards -->
     <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="NUKEMAP EDU" />
-    <meta name="twitter:description" content="Simulateur pédagogique interactif 3D d'impacts nucléaires basé sur les lois d'échelle de Glasstone & Dolan." />
-    <meta name="twitter:image" content="/icon-512.png" />
+    <meta
+      name="twitter:title"
+      content="NUKEMAP EDU — Simulateur Nucléaire 3D & Impacts Physiques"
+    />
+    <meta
+      name="twitter:description"
+      content="Modélisation interactive 2D/3D Glasstone & Dolan, trajectoires balistiques multi-cibles et données démographiques vérifiées en direct."
+    />
+    <meta
+      name="twitter:image"
+      content="https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/icon-512.png"
+    />
+
+    <!-- Données structurées Schema.org (WebApplication + Dataset + FAQPage) -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebApplication",
+            "@id": "https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/#webapp",
+            "name": "NUKEMAP EDU",
+            "url": "https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/",
+            "applicationCategory": "EducationalApplication",
+            "applicationSubCategory": "Physics & Geographic Simulation",
+            "operatingSystem": "Web Browser (PWA)",
+            "inLanguage": "fr",
+            "isAccessibleForFree": true,
+            "description": "Simulateur pédagogique interactif 2D/3D d'impacts nucléaires, de propagation balistique et d'hydrodynamique côtière basé sur Glasstone & Dolan (1977).",
+            "featureList": [
+              "Calcul des rayons de surpression (20 psi, 5 psi, 1-2 psi) et brûlures thermiques (1er, 2e, 3e degré)",
+              "Simulation balistique multi-frappes échelonnée par distance géodésique Haversine",
+              "Calculateur de tsunami côtier (Loi de Green, formule de Hunt et friction de Manning)",
+              "Extraction en direct via Wikidata (P1082/P2046), OpenStreetMap Nominatim et Open-Meteo DEM"
+            ],
+            "citation": "Samuel Glasstone & Philip J. Dolan, The Effects of Nuclear Weapons (1977)",
+            "image": "https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/icon-512.png"
+          },
+          {
+            "@type": "Dataset",
+            "@id": "https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/#dataset",
+            "name": "Base Géophysique & Démographique NUKEMAP EDU (279 villes)",
+            "description": "Données vérifiées de population, superficie, bathymétrie littorale, topographie et profils atmosphériques pour la simulation pédagogique.",
+            "inLanguage": "fr",
+            "isAccessibleForFree": true,
+            "creator": {
+              "@type": "Organization",
+              "name": "NUKEMAP EDU Project"
+            },
+            "distribution": {
+              "@type": "DataDownload",
+              "encodingFormat": "text/plain",
+              "contentUrl": "https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/llms-full.txt"
+            }
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "Comment l'application calcule-t-elle la zone d'impact ?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "NUKEMAP EDU résout en temps réel les équations empiriques du traité de Samuel Glasstone et Philip J. Dolan (The Effects of Nuclear Weapons, 1977) pour modéliser la surpression barométrique (20 psi, 5 psi, 1-2 psi) et le rayonnement thermique."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "D'où proviennent les données géographiques, démographiques et météorologiques ?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Les données proviennent de Wikidata (P1082/P2046), d'OpenStreetMap Nominatim (géocodage inverse, recensement et décompte d'infrastructures dans un rayon de 3 km), d'Open-Meteo (altitudes DEM 30m et vents en direct) et de la base UN World Urbanization Prospects / Demographia."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Comment fonctionne le calculateur hydrodynamique de tsunami littoral ?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "L'algorithme croise l'énergie effective côtière avec la bathymétrie locale et applique la loi de Green et la formule de Hunt corrigée par la friction de Manning pour estimer le shoaling et le run-up."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
   </head>
   <body class="bg-zinc-950 text-zinc-50">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

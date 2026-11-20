@@ -1,0 +1,30 @@
+# NUKEMAP EDU
+
+> Simulateur pédagogique et scientifique interactif 2D/3D d'impacts nucléaires, de propagation balistique multi-cibles et d'hydrodynamique de tsunami côtier, fondé sur les lois d'échelle empiriques de Samuel Glasstone et Philip J. Dolan (1977) et enrichi par des APIs géographiques, démographiques et météorologiques vérifiées en temps réel.
+
+## Accès & Points d'entrée
+
+- [Portail Pédagogique & Documentation Scientifique](https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/): Présentation des modèles physiques, cas pratiques académiques et FAQ technique.
+- [Console de Simulation 3D Interactive](https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/?autostart=1): Carte vectorielle MapLibre + Deck.gl v9 avec calcul en direct des zones de surpression, brûlures thermiques, trajectoires ICBM/SLBM et bilan démographique.
+- [Documentation Complète pour Moteurs IA (llms-full.txt)](https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/llms-full.txt): Détail complet des formules physiques, des vecteurs de livraison et de la provenance des données.
+- [Sitemap XML](https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/sitemap.xml): Plan d'indexation des vues principales.
+
+## Modèles Physiques & Méthodologie
+
+- **Ondes de choc barométriques & Rayonnement thermique** : Équations d'échelle de Glasstone & Dolan (*The Effects of Nuclear Weapons*, US DoD / ERDA, 1977) pour la boule de feu, le cratère de surface (corrigé par la rugosité du terrain), les seuils de surpression (20 psi, 5 psi, 1–2 psi) et les isothermes de brûlures (1er, 2e et 3e degrés).
+- **Balistique & Frappes Multiples** : Calcul géodésique Haversine (`R = 6371 km`), résolution des profils de vol (ICBM Minuteman III, SLBM Trident II, bombardier B-2 Spirit, missile de croisière Tomahawk, vecteur hypersonique) et échelonnement chronologique proportionnel à la distance réelle depuis le point d'origine.
+- **Hydrodynamique Côtière & Tsunami** : Loi de Green (amplification par diminution de profondeur sur le plateau continental) et formule simplifiée de Hunt pour le run-up et l'inondation, couplées au coefficient de Manning (`n`).
+- **Acoustique & Visualisation** : Graphique radial des pertes estimées par distance (`Recharts`) et moteur sonore procédural hors-ligne Web Audio API.
+
+## Sources de Données Vérifiées
+
+- **Démographie & Recensement** : Interrogation en cascade vérifiée via l'API OpenStreetMap Nominatim (géocodage inverse et `extratags`), l'API officielle Wikidata (`wbgetentities`, propriétés `P1082` population et `P2046` superficie), et la base de référence locale de 279 villes issue de **UN World Urbanization Prospects (2018–2023)** et **Demographia World Urban Areas**.
+- **Infrastructures Critiques (Rayon 3 km)** : Recherche spatiale bornée OpenStreetMap Nominatim pour le décompte réel des hôpitaux/cliniques, établissements scolaires/universitaires et zones industrielles.
+- **Topographie & Météorologie Temps Réel** : API Open-Meteo Elevation (MOD 30m sur 5 points cardinaux) et Open-Meteo Forecast (vitesse et direction du vent réel pour l'orientation du panache de retombées).
+- **Bathymétrie & Atmosphère Historique** : Métadonnées de référence GEBCO 2023, EMODnet, NOAA Coastal Relief, JODC, SRTM 30m, Copernicus DEM, ERA5 et radiosondages IGRA.
+
+## Limites & Usage Responsable
+
+- Outil strictement académique, pédagogique et de prévention des risques majeurs.
+- Les zones maritimes/océaniques retournent explicitement `0` victime civile afin d'éviter toute extrapolation démographique artificielle en haute mer.
+- Lorsque les APIs externes sont indisponibles, l'interface indique explicitement un statut d'estimation locale de repli sans jamais attribuer ces valeurs à l'ONU ou WorldPop.

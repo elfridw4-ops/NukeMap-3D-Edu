@@ -29,6 +29,11 @@ export interface CityData {
   country: string;
   latitude: number;
   longitude: number;
+  category?: string;
+  population: number;
+  areaKm2: number;
+  densityPerKm2: number;
+  populationSources: string[];
   educational_justification: string;
   historical_context?: {
     weapon?: string;
@@ -54,15 +59,33 @@ const parseAvgOrMid = (obj: any): number => {
   return 0;
 };
 
+// Sources officielles déclarées dans les métadonnées de cities.json (UN WUP / Demographia)
+const REFERENCE_POPULATION_SOURCES: string[] = Array.isArray((rawCitiesData as any)?.metadata?.sources?.population)
+  ? (rawCitiesData as any).metadata.sources.population
+  : ['UN World Urbanization Prospects 2018-2023', 'Demographia World Urban Areas'];
+
 export const CITIES_DATABASE: CityData[] = rawCitiesData.cities.map((city: any, index: number) => {
+  const population = typeof city.population === 'number' && Number.isFinite(city.population) ? city.population : 0;
+  const areaKm2 = typeof city.area_km2 === 'number' && Number.isFinite(city.area_km2) && city.area_km2 > 0
+    ? city.area_km2
+    : 0;
+  const densityPerKm2 = population > 0 && areaKm2 > 0
+    ? Math.round(population / areaKm2)
+    : 0;
+
   return {
     id: city.id || index + 1,
     name: city.name,
     country: city.country,
     latitude: city.coordinates.lat,
     longitude: city.coordinates.lon,
-    educational_justification: city.category === 'historical' 
-      ? `Cible historique: ${city.historical_event || ''}` 
+    category: city.category,
+    population,
+    areaKm2,
+    densityPerKm2,
+    populationSources: REFERENCE_POPULATION_SOURCES,
+    educational_justification: city.category === 'historical'
+      ? `Cible historique: ${city.historical_event || ''}`
       : `Scénario géopolitique (${city.category})`,
     historical_context: city.category === 'historical' ? {
       weapon: city.historical_event,
@@ -117,4 +140,3 @@ export function findNearbyCity(lat: number, lng: number, maxDistanceKm: number =
   }
   return closest;
 }
-

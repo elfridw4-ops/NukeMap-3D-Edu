@@ -21,6 +21,7 @@ import { LandingPage } from './components/LandingPage';
 import { usePersistedState } from './lib/hooks';
 import { PWAController } from './components/PWAController';
 import { soundEngine } from './lib/soundEngine';
+import { updateRuntimeSeoMetadata } from './lib/seo';
 
 export default function App() {
   const [currentTab, setCurrentTab] = usePersistedState<'landing' | 'simulator'>('currentTab', 'landing');
@@ -228,7 +229,7 @@ export default function App() {
     const checkWater = async () => {
       try {
         const response = await fetch(
-          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${target.lat}&lon=${target.lng}&zoom=11`,
+          `https://nominatim.openstreetmap.org/reverse?format=json&lat=${target.lat}&lon=${target.lng}&zoom=10&extratags=1&namedetails=1`,
           {
             signal,
             headers: {
@@ -278,9 +279,9 @@ export default function App() {
           });
         }
 
-        // Fetch our advanced automatic demographic and physical indicators
+        // Enrichissement automatique avec la réponse Nominatim complète (extratags.wikidata & recensement)
         try {
-          const autoData = await fetchAutomaticGeoData(target.lat, target.lng, isWater, address);
+          const autoData = await fetchAutomaticGeoData(target.lat, target.lng, isWater, data, signal);
           setAutoGeoData(autoData);
 
           // Update environment params: match real physical terrain roughness automatically!
@@ -295,7 +296,8 @@ export default function App() {
             shoreDistanceKm: prev.autoShoreDistance === false ? prev.shoreDistanceKm : (autoData.shoreDistanceKm ?? prev.shoreDistanceKm),
             beachSlopePct: autoData.beachSlopePct ?? prev.beachSlopePct
           }));
-        } catch (err) {
+        } catch (err: any) {
+          if (err?.name === 'AbortError') return;
           console.error("Failed to automatically enrich geodata:", err);
           setAutoGeoData(prev => ({ ...prev, loading: false, error: "Erreur topo/démographique" }));
         }
