@@ -116,3 +116,11 @@ Le projet est développé sur une base d'application moderne réactive Single Pa
     * Ajout de `calculateCasualtiesByDistance` et du type `CasualtyDistancePoint` dans `nuclearMath.ts` / `types.ts` pour ventiler exactement les totaux du bilan sur 4 couronnes concentriques croissantes (`Épicentre 20 psi`, `Souffle modéré 5 psi`, `Flux thermique`, `Zone périphérique`).
     * Création de `src/components/sidebar/CasualtiesByDistanceChart.tsx` avec `Recharts` (`BarChart` mesuré dynamiquement par `ResizeObserver`, axes compacts, légende claire et infobulle détaillée au thème Bunker Chic).
   * **Impact** : Lecture immédiate de la décroissance et de la répartition des victimes selon la distance à l'épicentre, sans débordement sur panneau desktop (`300px`) ni sur tiroir mobile.
+
+* **2026-11-20 — Suppression du Contrôle Décoratif MapLibre & Moteur Sonore Procédural**
+  * **Modification** : Retrait complet du widget `NavigationControl` (`+ / - / boussole`) et ajout d'un moteur d'effets sonores Web Audio API (`src/lib/soundEngine.ts`).
+  * **Détail** :
+    * Suppression de `NavigationControl`, de ses règles CSS `.maplibregl-ctrl-top-right` dans `src/index.css` et de l'espacement réservé dans `src/components/Map.tsx`.
+    * Création de `ProceduralSoundEngine` synthétisant sans fichier externe les impacts (calibrés par puissance `kt/Mt` et milieu terre/mer), le souffle de lancement balistique, les bips de verrouillage cible/origine, les crépitements Geiger des retombées, les alertes de portée et les retours tactiles UI.
+    * Ajout d'un bouton d'activation/coupure du son (`Volume2` / `VolumeX`, persisté dans `soundEnabled`) dans la barre supérieure unifiée.
+  * **Impact** : Interface cartographique épurée sans widget décoratif, et immersion audio complète fonctionnant hors-ligne en PWA.

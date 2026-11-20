@@ -11,6 +11,7 @@ import {
   haversineKm,
   WEAPON_PRESETS,
 } from './nuclearMath';
+import { computeDetonationSoundProfile, soundEngine } from './soundEngine';
 
 test('calculateBlastRadii clamps invalid or zero yields safely', () => {
   const zeroYield = calculateBlastRadii(0, 'surface');
@@ -107,4 +108,24 @@ test('calculateCasualtiesByDistance preserves exact totals across 4 strictly ord
     assert.equal(sumGrave, report.graveInjures);
     assert.equal(sumLight, report.lightInjures);
   }
+});
+
+test('computeDetonationSoundProfile scales acoustic duration with yield and runs safely headless', () => {
+  const small = computeDetonationSoundProfile(0.02, 'fission');
+  const large = computeDetonationSoundProfile(50000, 'fusion');
+  const dirty = computeDetonationSoundProfile(0.1, 'dirty');
+
+  assert.ok(large.durationSec > small.durationSec);
+  assert.ok(large.subFreqEndHz < small.subFreqEndHz);
+  assert.ok(dirty.geigerClicks > large.geigerClicks);
+
+  // Vérifie l'innocuité en environnement Node sans window.AudioContext
+  assert.doesNotThrow(() => {
+    soundEngine.playDetonation(20, 'fission', false);
+    soundEngine.playMissileLaunch();
+    soundEngine.playTargetLock('target');
+    soundEngine.playGeigerBurst(4);
+    soundEngine.playAlert();
+    soundEngine.playUiClick();
+  });
 });

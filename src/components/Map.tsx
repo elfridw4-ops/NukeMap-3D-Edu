@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import Map, { NavigationControl } from 'react-map-gl/maplibre';
+import Map from 'react-map-gl/maplibre';
 import * as maplibregl from 'maplibre-gl';
 import maplibreWorkerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?url';
 
@@ -11,7 +11,7 @@ if (typeof window !== 'undefined' && typeof maplibregl.setWorkerUrl === 'functio
 
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer, PolygonLayer, PointCloudLayer, PathLayer } from 'deck.gl';
-import { Sun, Moon, Globe, Sliders, Check, RotateCcw, Key, X, AlertCircle, LayoutDashboard } from 'lucide-react';
+import { Sun, Moon, Globe, Sliders, Check, RotateCcw, Key, X, AlertCircle, LayoutDashboard, Volume2, VolumeX } from 'lucide-react';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { BlastRadii, EnvironmentParams, PastStrike } from '../types';
 import {
@@ -19,6 +19,7 @@ import {
   resolveVectorFlightProfile,
   calculateFalloutPlumeLengthKm,
 } from '../lib/nuclearMath';
+import { soundEngine } from '../lib/soundEngine';
 
 interface MapViewProps {
   pastStrikes: PastStrike[];
@@ -47,6 +48,8 @@ interface MapViewProps {
   multiStrikeMode: boolean;
   tsunamiMetrics: TsunamiMetrics;
   onReturnToPortal?: () => void;
+  soundEnabled: boolean;
+  onToggleSound: () => void;
 }
 
 // Helper pour calculer une coordonnée de destination
@@ -393,7 +396,7 @@ export function transformMapboxUrl(url: string, resourceType: string, token: str
   return { url };
 }
 
-export function MapView({ pastStrikes, target, origin, radii, environmentParams, effectiveYield, onMapClick, viewState, setViewState, simulationMode, flightProgress, launchParams, targetDetails, detonationTimeMs, isDetonationAnimating, isDetonationPaused, multiStrikeMode, tsunamiMetrics, onReturnToPortal }: MapViewProps) {
+export function MapView({ pastStrikes, target, origin, radii, environmentParams, effectiveYield, onMapClick, viewState, setViewState, simulationMode, flightProgress, launchParams, targetDetails, detonationTimeMs, isDetonationAnimating, isDetonationPaused, multiStrikeMode, tsunamiMetrics, onReturnToPortal, soundEnabled, onToggleSound }: MapViewProps) {
   
   // Mode de rendu visuel de la carte (Nuit, Jour, Satellite)
   const [mapMode, setMapMode] = useState<MapMode>(() => {
@@ -1368,9 +1371,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
               setMapErrorMsg("Impossible de charger certaines tuiles cartographiques. Vérifiez votre connexion réseau.");
             }
           }}
-        >
-          <NavigationControl position="top-right" visualizePitch={true} />
-        </Map>
+        />
       </DeckGL>
 
       {/* Unified Top Bar: zero overlap across mobile & desktop */}
@@ -1379,7 +1380,10 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           {onReturnToPortal && (
             <button
               type="button"
-              onClick={onReturnToPortal}
+              onClick={() => {
+                soundEngine.playUiClick();
+                onReturnToPortal();
+              }}
               aria-label="Retourner au portail de présentation"
               className="min-h-11 flex items-center gap-2 bg-zinc-950/95 hover:bg-zinc-900 border border-zinc-800 text-zinc-100 font-mono text-[11px] uppercase font-bold tracking-wider px-3.5 rounded-lg shadow-xl cursor-pointer hover:border-red-500/60 transition-colors backdrop-blur-md whitespace-nowrap shrink-0"
             >
@@ -1390,10 +1394,13 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           )}
         </div>
 
-        <div className="pointer-events-auto flex items-center bg-zinc-950/95 border border-zinc-800 rounded-lg shadow-xl overflow-hidden md:mr-14 shrink-0 backdrop-blur-md">
+        <div className="pointer-events-auto flex items-center bg-zinc-950/95 border border-zinc-800 rounded-lg shadow-xl overflow-hidden shrink-0 backdrop-blur-md">
           <button
             type="button"
-            onClick={() => setMapMode('night')}
+            onClick={() => {
+              soundEngine.playUiClick();
+              setMapMode('night');
+            }}
             aria-label="Mode Nuit"
             aria-pressed={mapMode === 'night'}
             className={`min-h-11 min-w-11 flex items-center justify-center transition-colors duration-200 cursor-pointer ${mapMode === 'night' ? 'bg-zinc-800 text-blue-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'}`}
@@ -1404,7 +1411,10 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           <div className="w-[1px] h-5 bg-zinc-800" />
           <button
             type="button"
-            onClick={() => setMapMode('day')}
+            onClick={() => {
+              soundEngine.playUiClick();
+              setMapMode('day');
+            }}
             aria-label="Mode Jour"
             aria-pressed={mapMode === 'day'}
             className={`min-h-11 min-w-11 flex items-center justify-center transition-colors duration-200 cursor-pointer ${mapMode === 'day' ? 'bg-zinc-800 text-amber-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'}`}
@@ -1415,7 +1425,10 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           <div className="w-[1px] h-5 bg-zinc-800" />
           <button
             type="button"
-            onClick={() => setMapMode('satellite')}
+            onClick={() => {
+              soundEngine.playUiClick();
+              setMapMode('satellite');
+            }}
             aria-label="Mode Satellite"
             aria-pressed={mapMode === 'satellite'}
             className={`min-h-11 min-w-11 flex items-center justify-center transition-colors duration-200 cursor-pointer ${mapMode === 'satellite' ? 'bg-zinc-800 text-emerald-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'}`}
@@ -1426,7 +1439,21 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           <div className="w-[1px] h-5 bg-zinc-800" />
           <button
             type="button"
-            onClick={handleOpenConfig}
+            onClick={onToggleSound}
+            aria-label={soundEnabled ? "Désactiver les effets sonores" : "Activer les effets sonores"}
+            aria-pressed={soundEnabled}
+            className={`min-h-11 min-w-11 flex items-center justify-center transition-colors duration-200 cursor-pointer ${soundEnabled ? 'bg-zinc-800/80 text-emerald-400 hover:bg-zinc-800' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900'}`}
+            title={soundEnabled ? "Effets sonores activés" : "Effets sonores coupés"}
+          >
+            {soundEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+          </button>
+          <div className="w-[1px] h-5 bg-zinc-800" />
+          <button
+            type="button"
+            onClick={() => {
+              soundEngine.playUiClick();
+              handleOpenConfig();
+            }}
             aria-label="Configuration Cartographie et Mapbox"
             aria-expanded={isConfigOpen}
             className={`min-h-11 min-w-11 flex items-center justify-center transition-colors duration-200 relative cursor-pointer ${isConfigOpen || mapProvider === 'mapbox' ? 'bg-zinc-800 text-blue-400' : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'}`}
@@ -1442,7 +1469,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
 
       {/* Map Tile / Worker Alert Banner if error occurs */}
       {mapErrorMsg && (
-        <div role="alert" className="absolute top-[4.75rem] left-3 right-14 md:left-4 md:right-auto md:max-w-md z-[95] bg-red-950/95 border border-red-800 text-red-200 px-3 py-2 rounded-lg text-xs flex items-center justify-between gap-2 shadow-xl backdrop-blur-md">
+        <div role="alert" className="absolute top-[4.75rem] left-3 right-3 md:left-4 md:right-auto md:max-w-md z-[95] bg-red-950/95 border border-red-800 text-red-200 px-3 py-2 rounded-lg text-xs flex items-center justify-between gap-2 shadow-xl backdrop-blur-md">
           <div className="flex items-center gap-2 min-w-0">
             <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
             <span className="truncate">{mapErrorMsg}</span>

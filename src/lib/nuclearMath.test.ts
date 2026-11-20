@@ -10,6 +10,7 @@ import {
   haversineKm,
   WEAPON_PRESETS,
 } from './nuclearMath';
+import { computeDetonationSoundProfile, soundEngine } from './soundEngine';
 
 describe('calculateBlastRadii', () => {
   it('returns non-zero radii for a realistic yield and airburst', () => {
@@ -131,5 +132,26 @@ describe('calculateCasualtyReport', () => {
 
     const emptyPoints = calculateCasualtiesByDistance(radii, { ...dirtyReport, fatalities: 0, graveInjures: 0, lightInjures: 0 }, 'fission');
     expect(emptyPoints.every((p) => p.total === 0)).toBe(true);
+  });
+});
+
+describe('soundEngine & acoustic yield scaling', () => {
+  it('scales detonation rumble duration and cutoff frequencies by yield and weapon type', () => {
+    const tactical = computeDetonationSoundProfile(0.02, 'fission');
+    const strategic = computeDetonationSoundProfile(50000, 'fusion');
+    const dirty = computeDetonationSoundProfile(0.1, 'dirty');
+
+    expect(strategic.durationSec).toBeGreaterThan(tactical.durationSec);
+    expect(strategic.noiseFilterHz).toBeLessThan(tactical.noiseFilterHz);
+    expect(dirty.geigerClicks).toBeGreaterThan(strategic.geigerClicks);
+  });
+
+  it('tracks mute toggle state and handles missing AudioContext cleanly', () => {
+    soundEngine.setEnabled(false);
+    expect(soundEngine.isEnabled()).toBe(false);
+    expect(() => soundEngine.playDetonation(20, 'fission')).not.toThrow();
+
+    soundEngine.setEnabled(true);
+    expect(soundEngine.isEnabled()).toBe(true);
   });
 });

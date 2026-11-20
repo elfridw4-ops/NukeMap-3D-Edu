@@ -8,6 +8,7 @@ import { RotateCcw } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { usePersistedState } from './lib/hooks';
 import { PWAController } from './components/PWAController';
+import { soundEngine } from './lib/soundEngine';
 
 export default function App() {
   const [currentTab, setCurrentTab] = usePersistedState<'landing' | 'simulator'>('currentTab', 'landing');
@@ -65,6 +66,30 @@ export default function App() {
   const [isMobileHudOpen, setIsMobileHudOpen] = useState(false);
   // Conserve l'état du bottom sheet afin de positionner les actions flottantes au-dessus du panneau.
   const [isMobileSidebarCollapsed, setIsMobileSidebarCollapsed] = useState(false);
+
+  // État persistant d'activation des effets sonores (Web Audio API)
+  const [soundEnabled, setSoundEnabled] = usePersistedState<boolean>('soundEnabled', true);
+  const hasMountedDetonationRef = useRef<boolean>(false);
+  const runHasSoundRef = useRef<boolean>(false);
+  const geigerPlayedForRunRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    soundEngine.setEnabled(soundEnabled);
+  }, [soundEnabled]);
+
+  // Déverrouille AudioContext dès le premier geste utilisateur (phase capture avant les clics UI)
+  useEffect(() => {
+    if (!soundEnabled || typeof window === 'undefined') return;
+    const handleGesture = () => {
+      soundEngine.unlockFromGesture();
+    };
+    window.addEventListener('pointerdown', handleGesture, { passive: true, capture: true, once: true });
+    window.addEventListener('keydown', handleGesture, { passive: true, capture: true, once: true });
+    return () => {
+      window.removeEventListener('pointerdown', handleGesture, { capture: true });
+      window.removeEventListener('keydown', handleGesture, { capture: true });
+    };
+  }, [soundEnabled]);
 
   // Permet d'accéder directement au simulateur via ?autostart=1 sans passer par le portail
   useEffect(() => {
@@ -132,10 +157,16 @@ export default function App() {
     setFlightProgress(0);
   };
 
-  const triggerDetonation = () => {
+  const triggerDetonation = (withSound: boolean = false) => {
     setDetonationTimeMs(0);
     setIsDetonationAnimating(true);
     setIsDetonationPaused(false);
+    geigerPlayedForRunRef.current = false;
+    runHasSoundRef.current = withSound;
+    if (withSound) {
+      const currentYield = weapon.id === 'custom' ? customYield : weapon.yieldKt;
+      soundEngine.playDetonation(currentYield, weapon.weaponType, targetDetails.isWater);
+    }
   };
 
   const [autoGeoData, setAutoGeoData] = useState<AutomaticGeoData>(DEFAULT_AUTOMATIC_GEO_DATA);
@@ -324,7 +355,7 @@ export default function App() {
     // En mode instantané ou s'il n'y a pas d'origine, l'impact se produit immédiatement sans délai de trajectoire
     if (simulationMode === 'instant' || !origin) {
       setFlightProgress(1);
-      triggerDetonation();
+      triggerDetonation(true);
       return;
     }
 
@@ -336,6 +367,7 @@ export default function App() {
 
     // Vérification de portée sans window.alert (bloqué en iframe)
     if (distKm > profile.maxRangeKm) {
+      soundEngine.playAlert();
       setBallisticError(`Portée insuffisante : ${Math.round(distKm).toLocaleString('fr-FR')} km requis pour ${profile.maxRangeKm.toLocaleString('fr-FR')} km max.`);
       setFlightProgress(0);
       return;
@@ -343,6 +375,7 @@ export default function App() {
 
     // Reset any previous sequence
     setFlightProgress(0.01);
+    soundEngine.playMissileLaunch();
 
     // Calculated flight time in minutes
     const fTime = flightTimeMin(distKm, profile.speedKmh);
@@ -362,7 +395,7 @@ export default function App() {
       
       if (progress >= 1) {
         setFlightProgress(1); // Detonation triggers
-        triggerDetonation(); // Start the dynamic detonation propagation animation
+        triggerDetonation(true); // Start the dynamic detonation propagation animation + audio
         launchAnimRef.current = null;
       } else {
         setFlightProgress(progress);
@@ -415,6 +448,15 @@ export default function App() {
 
       setDetonationTimeMs(prev => {
         const next = prev + dt;
+        if (
+          next >= 5000 &&
+          !geigerPlayedForRunRef.current &&
+          runHasSoundRef.current &&
+          environmentParams.explosionType === 'surface'
+        ) {
+          geigerPlayedForRunRef.current = true;
+          soundEngine.playGeigerBurst(7);
+        }
         if (next >= 10000) {
           setIsDetonationAnimating(false);
           return 10000;
@@ -427,12 +469,16 @@ export default function App() {
 
     animId = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(animId);
-  }, [isDetonationAnimating, isDetonationPaused]);
+  }, [isDetonationAnimating, isDetonationPaused, environmentParams.explosionType]);
 
   // Automatically trigger detonation in instant mode when relevant inputs change to restart the animation
   useEffect(() => {
     if (simulationMode === 'instant' && target) {
-      triggerDetonation();
+      const shouldPlayAudio = hasMountedDetonationRef.current;
+      hasMountedDetonationRef.current = true;
+      triggerDetonation(shouldPlayAudio);
+    } else {
+      hasMountedDetonationRef.current = true;
     }
   }, [target?.lat, target?.lng, weapon.id, customYield, environmentParams.explosionType, simulationMode]);
 
@@ -518,8 +564,20 @@ export default function App() {
 
   const isDetonated = simulationMode === 'instant' || flightProgress === 1;
 
+  const handleToggleSound = () => {
+    const next = !soundEnabled;
+    setSoundEnabled(next);
+    soundEngine.setEnabled(next);
+    if (next) {
+      soundEngine.playUiClick();
+    }
+  };
+
   if (currentTab === 'landing') {
-    return <LandingPage onLaunchSimulator={() => setCurrentTab('simulator')} />;
+    return <LandingPage onLaunchSimulator={() => {
+      soundEngine.playUiClick();
+      setCurrentTab('simulator');
+    }} />;
   }
 
   return (
@@ -589,9 +647,12 @@ export default function App() {
           isDetonationAnimating={isDetonationAnimating}
           isDetonationPaused={isDetonationPaused}
           pastStrikes={pastStrikes}
+          soundEnabled={soundEnabled}
+          onToggleSound={handleToggleSound}
           onReturnToPortal={() => setCurrentTab('landing')}
           onMapClick={(lng, lat) => {
             cancelFlight();
+            soundEngine.playTargetLock(selectionMode);
             if (selectionMode === 'target') {
               if (multiStrikeMode && target) {
                 setPastStrikes(prev => [...prev, {
@@ -670,10 +731,9 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       if (detonationTimeMs >= 10000) {
-                        setDetonationTimeMs(0);
-                        setIsDetonationAnimating(true);
-                        setIsDetonationPaused(false);
+                        triggerDetonation(true);
                       } else {
+                        soundEngine.playUiClick();
                         setIsDetonationPaused(!isDetonationPaused);
                         if (!isDetonationAnimating) {
                           setIsDetonationAnimating(true);
@@ -713,11 +773,7 @@ export default function App() {
 
                   <button
                     type="button"
-                    onClick={() => {
-                      setDetonationTimeMs(0);
-                      setIsDetonationAnimating(true);
-                      setIsDetonationPaused(false);
-                    }}
+                    onClick={() => triggerDetonation(true)}
                     aria-label="Recommencer la détonation"
                     className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors shrink-0 border border-zinc-700/50 flex items-center justify-center cursor-pointer"
                     title="Recommencer la détonation"
@@ -826,10 +882,9 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     if (detonationTimeMs >= 10000) {
-                      setDetonationTimeMs(0);
-                      setIsDetonationAnimating(true);
-                      setIsDetonationPaused(false);
+                      triggerDetonation(true);
                     } else {
+                      soundEngine.playUiClick();
                       setIsDetonationPaused(!isDetonationPaused);
                       if (!isDetonationAnimating) {
                         setIsDetonationAnimating(true);
@@ -862,11 +917,7 @@ export default function App() {
 
                 <button
                   type="button"
-                  onClick={() => {
-                    setDetonationTimeMs(0);
-                    setIsDetonationAnimating(true);
-                    setIsDetonationPaused(false);
-                  }}
+                  onClick={() => triggerDetonation(true)}
                   aria-label="Recommencer la détonation"
                   className="min-h-11 min-w-11 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white transition-colors shrink-0 flex items-center justify-center cursor-pointer"
                 >
