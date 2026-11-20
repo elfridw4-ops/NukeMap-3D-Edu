@@ -13,13 +13,52 @@ import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer, PolygonLayer, PointCloudLayer, PathLayer } from 'deck.gl';
 import { Sun, Moon, Globe, Sliders, Check, RotateCcw, Key, X, AlertCircle, LayoutDashboard, Volume2, VolumeX } from 'lucide-react';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { BlastRadii, EnvironmentParams, PastStrike } from '../types';
+import { BlastRadii, EnvironmentParams, PastStrike, StrikeBallisticStatus } from '../types';
 import {
   TsunamiMetrics,
   resolveVectorFlightProfile,
   calculateFalloutPlumeLengthKm,
 } from '../lib/nuclearMath';
 import { soundEngine } from '../lib/soundEngine';
+
+// Calcule la couleur, pulsation et rayon de la boule de feu pour une détonation donnée
+function getFireballVisuals(detTimeMs: number, fireballRadius: number) {
+  const progress = Math.max(0, Math.min(1, (detTimeMs - 80) / 720));
+  const pulsation = (detTimeMs >= 600 && detTimeMs <= 800)
+    ? 1.0 + 0.04 * Math.sin((detTimeMs - 600) * 0.05)
+    : 1.0;
+
+  let color: [number, number, number, number] = [255, 255, 255, 180];
+  if (progress > 0) {
+    let rColor = 255;
+    let gColor = 255;
+    let bColor = 255;
+
+    if (progress < 0.3) {
+      const p = progress / 0.3;
+      gColor = Math.floor(255 - 15 * p);
+      bColor = Math.floor(255 - 117 * p);
+    } else if (progress < 0.7) {
+      const p = (progress - 0.3) / 0.4;
+      rColor = Math.floor(254 - 5 * p);
+      gColor = Math.floor(240 - 125 * p);
+      bColor = Math.floor(138 - 116 * p);
+    } else {
+      const p = (progress - 0.7) / 0.3;
+      rColor = Math.floor(249 - 64 * p);
+      gColor = Math.floor(115 - 87 * p);
+      bColor = Math.floor(22 + 6 * p);
+    }
+    color = [rColor, gColor, bColor, 180 + Math.floor(Math.sin(detTimeMs * 0.1) * 15)];
+  }
+
+  return {
+    progress,
+    pulsation,
+    currentRadius: fireballRadius * progress * pulsation,
+    color,
+  };
+}
 
 interface MapViewProps {
   pastStrikes: PastStrike[];
@@ -50,6 +89,7 @@ interface MapViewProps {
   onReturnToPortal?: () => void;
   soundEnabled: boolean;
   onToggleSound: () => void;
+  strikeBallisticStates?: Record<string, StrikeBallisticStatus>;
 }
 
 // Helper pour calculer une coordonnée de destination
@@ -396,7 +436,7 @@ export function transformMapboxUrl(url: string, resourceType: string, token: str
   return { url };
 }
 
-export function MapView({ pastStrikes, target, origin, radii, environmentParams, effectiveYield, onMapClick, viewState, setViewState, simulationMode, flightProgress, launchParams, targetDetails, detonationTimeMs, isDetonationAnimating, isDetonationPaused, multiStrikeMode, tsunamiMetrics, onReturnToPortal, soundEnabled, onToggleSound }: MapViewProps) {
+export function MapView({ pastStrikes, target, origin, radii, environmentParams, effectiveYield, onMapClick, viewState, setViewState, simulationMode, flightProgress, launchParams, targetDetails, detonationTimeMs, isDetonationAnimating, isDetonationPaused, multiStrikeMode, tsunamiMetrics, onReturnToPortal, soundEnabled, onToggleSound, strikeBallisticStates }: MapViewProps) {
   
   // Mode de rendu visuel de la carte (Nuit, Jour, Satellite)
   const [mapMode, setMapMode] = useState<MapMode>(() => {
@@ -553,29 +593,38 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
   const thermalProgress = Math.max(0, Math.min(1, (detonationTimeMs - 1200) / 3800));
   const currentThermalWaveRadius = thermalProgress * radii.thermal1st;
 
-  // Calculate dynamic PSI at the wavefront
+  // Calculate dynamic PSI at the wavefront (tracks active wavefront across staggered strikes in ballistic mode)
   const currentPsi = useMemo(() => {
-    if (!currentBlastWaveRadius || currentBlastWaveRadius <= 0) return 0;
-    
-    if (currentBlastWaveRadius <= radii.fireball) return 200;
-    
-    if (currentBlastWaveRadius <= radii.heavyBlast) {
-      const p = (currentBlastWaveRadius - radii.fireball) / (radii.heavyBlast - radii.fireball);
-      return 200 - p * (200 - 20);
-    }
-    
-    if (currentBlastWaveRadius <= radii.moderateBlast) {
-      const p = (currentBlastWaveRadius - radii.heavyBlast) / (radii.moderateBlast - radii.heavyBlast);
-      return 20 - p * (20 - 5);
-    }
-    
-    if (currentBlastWaveRadius <= radii.lightBlast) {
-      const p = (currentBlastWaveRadius - radii.moderateBlast) / (radii.lightBlast - radii.moderateBlast);
+    const evalPsi = (blastR: number, strikeR: BlastRadii): number => {
+      if (!blastR || blastR <= 0 || blastR >= strikeR.lightBlast) return 0;
+      if (blastR <= strikeR.fireball) return 200;
+      if (blastR <= strikeR.heavyBlast) {
+        const p = (blastR - strikeR.fireball) / Math.max(1, strikeR.heavyBlast - strikeR.fireball);
+        return 200 - p * (200 - 20);
+      }
+      if (blastR <= strikeR.moderateBlast) {
+        const p = (blastR - strikeR.heavyBlast) / Math.max(1, strikeR.moderateBlast - strikeR.heavyBlast);
+        return 20 - p * (20 - 5);
+      }
+      const p = (blastR - strikeR.moderateBlast) / Math.max(1, strikeR.lightBlast - strikeR.moderateBlast);
       return 5 - p * (5 - 1);
+    };
+
+    if (simulationMode === 'ballistic' && strikeBallisticStates) {
+      let maxActivePsi = 0;
+      const entries = Object.values(strikeBallisticStates);
+      for (const st of entries) {
+        if (!st.inRange || st.detonationTimeMs === null) continue;
+        const bp = Math.max(0, Math.min(1, (st.detonationTimeMs - 800) / 2200));
+        const br = bp * radii.lightBlast;
+        const psi = evalPsi(br, radii);
+        if (psi > maxActivePsi) maxActivePsi = psi;
+      }
+      return maxActivePsi;
     }
-    
-    return 0;
-  }, [currentBlastWaveRadius, radii]);
+
+    return evalPsi(currentBlastWaveRadius, radii);
+  }, [simulationMode, strikeBallisticStates, currentBlastWaveRadius, radii]);
 
   // Deterministic Fireball Flying Debris Particles (consistent across renders/reloads)
   const fireballDebrisParticles = useMemo(() => {
@@ -744,7 +793,9 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
             id: `missile-predicted-trajectory-${strId}`,
             data: dashSegments,
             getPath: (d: any) => d.path,
-            getColor: [...vectorRgb, 120] as any,
+            getColor: (strikeBallisticStates?.[strId] && !strikeBallisticStates[strId].inRange)
+              ? [161, 161, 170, 70]
+              : ([...vectorRgb, 120] as any),
             getWidth: 2.5,
             widthUnits: 'pixels',
             pickable: false,
@@ -752,9 +803,12 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           })
         );
 
+        // Progression individuelle par distance réelle : chaque ogive suit son propre avancement p
+        const strikeFlightState = strikeBallisticStates?.[strId];
+        const p = strikeFlightState ? strikeFlightState.progress : flightProgress;
+
         // Flight trail and vehicle visual if flying
-        if (flightProgress > 0 && flightProgress < 1) {
-          const p = flightProgress;
+        if (p > 0 && p < 1) {
           const currentLng = origin.lng + (targetCoord.lng - origin.lng) * p;
           const currentLat = origin.lat + (targetCoord.lat - origin.lat) * p;
           const currentAlt = 4 * maxAlt * p * (1 - p);
@@ -844,7 +898,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
       });
     }
 
-    // Now, render simultaneous explosion logic for ALL active strikes
+    // Now, render independent explosion timelines for ALL active strikes
     activeStrikes.forEach(strike => {
       const strId = strike.id;
       const targetCoord = strike.target;
@@ -852,9 +906,21 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
       const strikeYield = strike.effectiveYield;
       const centerPoint = [targetCoord.lng, targetCoord.lat];
 
+      const strikeBallisticState = simulationMode === 'ballistic' ? strikeBallisticStates?.[strId] : undefined;
+      const strikeIsDetonated = simulationMode === 'instant'
+        ? true
+        : (strikeBallisticState ? strikeBallisticState.detonationTimeMs !== null : isDetonated);
+      const strikeDetonationMs = simulationMode === 'instant'
+        ? detonationTimeMs
+        : (strikeBallisticState ? (strikeBallisticState.detonationTimeMs ?? 0) : detonationTimeMs);
+
+      const strikeBlastProgress = Math.max(0, Math.min(1, (strikeDetonationMs - 800) / 2200));
+      const strikeThermalProgress = Math.max(0, Math.min(1, (strikeDetonationMs - 1200) / 3800));
+      const strikeFireball = getFireballVisuals(strikeDetonationMs, strikeRadii.fireball);
+
       // Plume de retombées radioactives (Fallout)
-      if (isDetonated && environmentParams?.explosionType === 'surface' && detonationTimeMs >= 5000) {
-        const currentFalloutProgress = Math.max(0, Math.min(1, (detonationTimeMs - 5000) / 5000));
+      if (strikeIsDetonated && environmentParams?.explosionType === 'surface' && strikeDetonationMs >= 5000) {
+        const currentFalloutProgress = Math.max(0, Math.min(1, (strikeDetonationMs - 5000) / 5000));
         const falloutLengthKm = calculateFalloutPlumeLengthKm(strikeRadii.heavyBlast, environmentParams.windSpeed) * currentFalloutProgress;
         const direction = environmentParams.windDirection;
         const numPoints = 30;
@@ -913,8 +979,8 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
       }
 
       // Render actual falling environmental fallout particles adrift in 3D for each strike
-      const strikeFalloutDebrisData = calculateActiveFalloutDebris(targetCoord, detonationTimeMs, falloutDriftParticles, strikeRadii.heavyBlast, environmentParams);
-      if (isDetonated && strikeFalloutDebrisData.length > 0) {
+      const strikeFalloutDebrisData = calculateActiveFalloutDebris(targetCoord, strikeDetonationMs, falloutDriftParticles, strikeRadii.heavyBlast, environmentParams);
+      if (strikeIsDetonated && strikeFalloutDebrisData.length > 0) {
         activeLayers.push(
           new PointCloudLayer({
             id: `fallout-descending-particles-${strId}`,
@@ -929,19 +995,19 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         );
       }
 
-      if (isDetonated) {
+      if (strikeIsDetonated) {
         // Thermal Radiation Waves appear on timeline (1200ms -> 5000ms)
-        const curThermalWaveRadius = thermalProgress * strikeRadii.thermal1st;
+        const curThermalWaveRadius = strikeThermalProgress * strikeRadii.thermal1st;
         if (curThermalWaveRadius > 0) {
           activeLayers.push(
             new ScatterplotLayer({
               id: `thermal-1st-layer-${strId}`,
               data: [{ position: centerPoint }],
               getPosition: (d: any) => d.position,
-              getFillColor: [253, 224, 71, Math.floor(35 * thermalProgress)], 
+              getFillColor: [253, 224, 71, Math.floor(35 * strikeThermalProgress)], 
               getRadius: () => Math.min(strikeRadii.thermal1st, curThermalWaveRadius),
               stroked: true,
-              getLineColor: [253, 224, 71, Math.floor(100 * thermalProgress)],
+              getLineColor: [253, 224, 71, Math.floor(100 * strikeThermalProgress)],
               getLineWidth: 1,
               lineWidthUnits: 'pixels',
               pickable: false,
@@ -951,10 +1017,10 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
               id: `thermal-2nd-layer-${strId}`,
               data: [{ position: centerPoint }],
               getPosition: (d: any) => d.position,
-              getFillColor: [251, 146, 60, Math.floor(40 * thermalProgress)], 
+              getFillColor: [251, 146, 60, Math.floor(40 * strikeThermalProgress)], 
               getRadius: () => Math.min(strikeRadii.thermal2nd, curThermalWaveRadius),
               stroked: true,
-              getLineColor: [251, 146, 60, Math.floor(120 * thermalProgress)],
+              getLineColor: [251, 146, 60, Math.floor(120 * strikeThermalProgress)],
               getLineWidth: 1,
               lineWidthUnits: 'pixels',
               pickable: false,
@@ -964,10 +1030,10 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
               id: `thermal-3rd-layer-${strId}`,
               data: [{ position: centerPoint }],
               getPosition: (d: any) => d.position,
-              getFillColor: [249, 115, 22, Math.floor(45 * thermalProgress)], 
+              getFillColor: [249, 115, 22, Math.floor(45 * strikeThermalProgress)], 
               getRadius: () => Math.min(strikeRadii.thermal3rd, curThermalWaveRadius),
               stroked: true,
-              getLineColor: [249, 115, 22, Math.floor(150 * thermalProgress)],
+              getLineColor: [249, 115, 22, Math.floor(150 * strikeThermalProgress)],
               getLineWidth: 1.5,
               lineWidthUnits: 'pixels',
               pickable: false,
@@ -977,7 +1043,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         }
 
         // Pressure Blast Waves
-        const curBlastWaveRadius = blastProgress * strikeRadii.lightBlast;
+        const curBlastWaveRadius = strikeBlastProgress * strikeRadii.lightBlast;
         if (curBlastWaveRadius > 0) {
           activeLayers.push(
             new ScatterplotLayer({
@@ -1023,15 +1089,15 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         }
 
         // Concentric pressure wave line bands
-        let currentPsi = 1;
+        let strikeCurrentPsi = 1;
         if (curBlastWaveRadius > 0) {
-           if (curBlastWaveRadius <= strikeRadii.heavyBlast * 0.65) currentPsi = 55;
-           else if (curBlastWaveRadius <= strikeRadii.heavyBlast) currentPsi = 25;
-           else if (curBlastWaveRadius <= strikeRadii.moderateBlast) currentPsi = 10;
-           else currentPsi = 2;
+           if (curBlastWaveRadius <= strikeRadii.heavyBlast * 0.65) strikeCurrentPsi = 55;
+           else if (curBlastWaveRadius <= strikeRadii.heavyBlast) strikeCurrentPsi = 25;
+           else if (curBlastWaveRadius <= strikeRadii.moderateBlast) strikeCurrentPsi = 10;
+           else strikeCurrentPsi = 2;
         }
 
-        const strikeShockwaveBands = calculateShockwaveBands(targetCoord, detonationTimeMs, blastProgress, curBlastWaveRadius, currentPsi);
+        const strikeShockwaveBands = calculateShockwaveBands(targetCoord, strikeDetonationMs, strikeBlastProgress, curBlastWaveRadius, strikeCurrentPsi);
         if (strikeShockwaveBands.length > 0) {
           activeLayers.push(
             ...strikeShockwaveBands.map((band, idx) => 
@@ -1050,17 +1116,17 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         }
 
         // Fireball Gas Dome
-        const curFireballRadius = strikeRadii.fireball * fireballProgress * fireballPulsation;
-        if (detonationTimeMs >= 80 && curFireballRadius > 0) {
+        const curFireballRadius = strikeFireball.currentRadius;
+        if (strikeDetonationMs >= 80 && curFireballRadius > 0) {
           activeLayers.push(
             new ScatterplotLayer({
               id: `fireball-layer-${strId}`,
               data: [{ position: centerPoint }],
               getPosition: (d: any) => d.position,
-              getFillColor: fireballColor,
+              getFillColor: strikeFireball.color,
               getRadius: () => curFireballRadius,
               stroked: true,
-              getLineColor: [234, 179, 8, Math.floor(220 * fireballProgress)],
+              getLineColor: [234, 179, 8, Math.floor(220 * strikeFireball.progress)],
               getLineWidth: 2,
               lineWidthUnits: 'pixels',
               pickable: false,
@@ -1070,7 +1136,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         }
 
         // Fireball Debris Scattering
-        const strikeDebrisData = calculateActiveDebris(targetCoord, detonationTimeMs, fireballDebrisParticles, strikeRadii.fireball);
+        const strikeDebrisData = calculateActiveDebris(targetCoord, strikeDetonationMs, fireballDebrisParticles, strikeRadii.fireball);
         if (strikeDebrisData.length > 0) {
           activeLayers.push(
             new ScatterplotLayer({
@@ -1089,8 +1155,8 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         }
 
         // Surface Crater
-        if (environmentParams.explosionType === 'surface' && strikeRadii.crater > 0 && detonationTimeMs >= 80) {
-          const craterProgress = Math.max(0, Math.min(1, (detonationTimeMs - 80) / 720));
+        if (environmentParams.explosionType === 'surface' && strikeRadii.crater > 0 && strikeDetonationMs >= 80) {
+          const craterProgress = Math.max(0, Math.min(1, (strikeDetonationMs - 80) / 720));
           const currentCraterRadius = strikeRadii.crater * craterProgress;
           if (currentCraterRadius > 0) {
             activeLayers.push(
@@ -1112,7 +1178,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         }
 
         // Mushroom Cloud point-cloud (GPU-instanced particles)
-        const strikeMushroomCloudData = calculateMushroomCloud(targetCoord, environmentParams, strikeYield, detonationTimeMs);
+        const strikeMushroomCloudData = calculateMushroomCloud(targetCoord, environmentParams, strikeYield, strikeDetonationMs);
         if (environmentParams?.showMushroomCloud && strikeMushroomCloudData.length > 0) {
           activeLayers.push(
             new PointCloudLayer({
@@ -1130,11 +1196,11 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         }
 
         // Maritime flood & tsunami progress waves
-        if (environmentParams?.maritimeImpact && tsunamiMetrics?.isEligible && detonationTimeMs >= 2000) {
+        if (environmentParams?.maritimeImpact && tsunamiMetrics?.isEligible && strikeDetonationMs >= 2000) {
           const oceanDepthM = environmentParams.oceanDepthM ?? 2000;
           const shoreDistanceKm = environmentParams.shoreDistanceKm ?? 5;
           const coastalFloodingRadius = tsunamiMetrics.recommendedFloodRadiusM;
-          const maritimeProgress = Math.max(0, Math.min(1, (detonationTimeMs - 2000) / 4000));
+          const maritimeProgress = Math.max(0, Math.min(1, (strikeDetonationMs - 2000) / 4000));
           const currentFloodRadius = coastalFloodingRadius * maritimeProgress;
 
           if (currentFloodRadius > 0) {
@@ -1174,7 +1240,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           if (targetDetails?.isWater) {
              const numRings = 4;
              for (let i = 0; i < numRings; i++) {
-                const timeActiveMs = Math.max(0, (detonationTimeMs - 2000) - i * 600);
+                const timeActiveMs = Math.max(0, (strikeDetonationMs - 2000) - i * 600);
                 if (timeActiveMs <= 0) continue;
                 
                 // Vitesse proportionnelle à sqrt(profondeur) * 9.8
@@ -1222,11 +1288,11 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           id: `target-center-${strId}`,
           data: [{ position: centerPoint }],
           getPosition: (d: any) => d.position,
-          getFillColor: isDetonated ? [255, 255, 255, 255] : [239, 68, 68, 255],
+          getFillColor: strikeIsDetonated ? [255, 255, 255, 255] : [239, 68, 68, 255],
           getRadius: () => 100, 
           radiusMinPixels: 4,
           stroked: true,
-          getLineColor: isDetonated ? [0, 0, 0, 255] : [255, 255, 255, 255],
+          getLineColor: strikeIsDetonated ? [0, 0, 0, 255] : [255, 255, 255, 255],
           lineWidthMinPixels: 2,
           pickable: false,
           parameters: { depthTest: false }
@@ -1271,14 +1337,15 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
     fireballColor,
     blastProgress,
     thermalProgress,
-    fireballDebrisParticles
+    fireballDebrisParticles,
+    strikeBallisticStates
   ]);
 
   return (
     <div className="w-full h-full relative cursor-crosshair touch-none" data-testid="map-viewport">
       {/* Shockwave PSI Status Bar */}
       <AnimatePresence>
-        {currentBlastWaveRadius > 0 && currentPsi > 0 && currentBlastWaveRadius < radii.lightBlast && (
+        {currentPsi > 0 && (
           <motion.div
             initial={{ opacity: 0, y: -20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}

@@ -24,6 +24,7 @@
 * [x] **Suppression du Composant Décoratif `NavigationControl`** : Retrait complet du widget MapLibre `+ / - / boussole` redondant avec DeckGL et de ses règles CSS `.maplibregl-ctrl-top-right`, libérant la partie haute droite sur mobile et desktop.
 * [x] **Unification Balistique, Physique & État Persistant** : Centralisation de `resolveVectorFlightProfile` et `calculateFalloutPlumeLengthKm` dans `nuclearMath.ts`, correction de la distance haversine et des 8 paramètres tsunami dans la sidebar, remplacement de `window.alert` par une bannière d'erreur balistique inline (`role="alert"`), assainissement de `viewState` Deck.gl lors des redimensionnements, et suppression de `Math.random()` dans le repli géodonnée OSM.
 * [x] **Nettoyage Tailwind, Accessibilité & PWA** : Remplacement des classes Tailwind invalides (`zinc-850`, `zinc-350`, etc.), conversion des infobulles hover-only en bascules tactiles cliquables (`aria-expanded`), alignement de `manifest.json` / `index.html` / `service-worker.js` (`v3` sans mise en cache des routes Vite dev), et extension des suites de tests unitaires (`node:test` et `vitest`).
+* [x] **Échelonnement Temporel Balistique Multi-Frappes** : Calcul des temps de vol et d'impact par cible selon sa distance géodésique Haversine (`computeMultiStrikeTimings`, `evaluateBallisticClock`), horloge unifiée par salve dans `App.tsx`, progression/détonations/flashes gamma et sons individuels par ogive dans `Map.tsx` et fenêtre de tir multi-cibles dans `TargetConfigSection.tsx`.
 
 
 ## Tâches en cours

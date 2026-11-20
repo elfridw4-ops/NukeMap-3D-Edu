@@ -1,8 +1,20 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { MapView } from './components/Map';
-import { WEAPON_PRESETS, calculateBlastRadii, estimateClosestSeaDistanceKm, haversineKm, flightTimeMin, getSimulatedTimeSec, calculateTsunamiMetrics, calculateCasualtyReport, resolveVectorFlightProfile } from './lib/nuclearMath';
-import { WeaponConfig, LaunchParams, EnvironmentParams, PastStrike } from './types';
+import {
+  WEAPON_PRESETS,
+  calculateBlastRadii,
+  estimateClosestSeaDistanceKm,
+  haversineKm,
+  getSimulatedTimeSec,
+  calculateTsunamiMetrics,
+  calculateCasualtyReport,
+  resolveVectorFlightProfile,
+  computeMultiStrikeTimings,
+  evaluateBallisticClock,
+  ComputedStrikeTiming,
+} from './lib/nuclearMath';
+import { WeaponConfig, LaunchParams, EnvironmentParams, PastStrike, StrikeBallisticStatus } from './types';
 import { fetchAutomaticGeoData, DEFAULT_AUTOMATIC_GEO_DATA, AutomaticGeoData } from './lib/geoDataFetcher';
 import { RotateCcw } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
@@ -55,6 +67,16 @@ export default function App() {
   const [isDetonationAnimating, setIsDetonationAnimating] = useState<boolean>(false);
   const [isDetonationPaused, setIsDetonationPaused] = useState<boolean>(false);
   const launchAnimRef = useRef<number | null>(null);
+
+  // État d'horloge unifiée pour les salves balistiques multi-cibles échelonnées selon la distance
+  const [launchedTimings, setLaunchedTimings] = useState<ComputedStrikeTiming[]>([]);
+  const [ballisticClockMs, setBallisticClockMs] = useState<number>(0);
+  const [isBallisticRunning, setIsBallisticRunning] = useState<boolean>(false);
+  const [isBallisticPaused, setIsBallisticPaused] = useState<boolean>(false);
+  const ballisticClockRef = useRef<number>(0);
+  const triggeredImpactsRef = useRef<Set<string>>(new Set());
+  const triggeredGeigerRef = useRef<Set<string>>(new Set());
+  const strikeAudioMetaRef = useRef<Record<string, { effectiveYield: number; isWater: boolean }>>({});
 
   // Controls for Propagation Chronology Controller HUD Drag & Drop and minimize/restore
   const [hudOffset, setHudOffset] = useState({ x: 0, y: 0 });
@@ -155,6 +177,13 @@ export default function App() {
       launchAnimRef.current = null;
     }
     setFlightProgress(0);
+    setLaunchedTimings([]);
+    setBallisticClockMs(0);
+    ballisticClockRef.current = 0;
+    setIsBallisticRunning(false);
+    setIsBallisticPaused(false);
+    triggeredImpactsRef.current.clear();
+    triggeredGeigerRef.current.clear();
   };
 
   const triggerDetonation = (withSound: boolean = false) => {
@@ -342,71 +371,129 @@ export default function App() {
     }
   };
 
+  const effectiveYield = weapon.id === 'custom' ? customYield : weapon.yieldKt;
+
+  // Liste dédupliquée des cibles actives (alignée à 100 % avec les IDs de Map.tsx)
+  const activeStrikeTargets = useMemo(() => {
+    const list: Array<{ id: string; target: { lng: number; lat: number }; effectiveYield: number }> = [];
+    if (target) {
+      list.push({ id: 'current-target', target, effectiveYield });
+    }
+    if (multiStrikeMode && pastStrikes.length > 0) {
+      pastStrikes.forEach((strike) => {
+        if (!list.some((s) => s.target.lng === strike.target.lng && s.target.lat === strike.target.lat)) {
+          list.push({ id: strike.id, target: strike.target, effectiveYield: strike.effectiveYield });
+        }
+      });
+    }
+    return list;
+  }, [target, effectiveYield, multiStrikeMode, pastStrikes]);
+
+  // États individuels (progress 0..1 & âge de détonation) calculés à chaque instant de l'horloge balistique
+  const strikeBallisticStates = useMemo<Record<string, StrikeBallisticStatus> | undefined>(() => {
+    if (simulationMode !== 'ballistic' || launchedTimings.length === 0) {
+      return undefined;
+    }
+    return evaluateBallisticClock(launchedTimings, ballisticClockMs);
+  }, [simulationMode, launchedTimings, ballisticClockMs]);
+
+  const { minImpactAtMs, maxImpactAtMs, hasAnyBallisticImpact } = useMemo(() => {
+    const active = launchedTimings.filter((t) => t.inRange);
+    if (active.length === 0) {
+      return { minImpactAtMs: 0, maxImpactAtMs: 0, hasAnyBallisticImpact: false };
+    }
+    const minMs = Math.min(...active.map((t) => t.impactAtMs));
+    const maxMs = Math.max(...active.map((t) => t.impactAtMs));
+    return {
+      minImpactAtMs: minMs,
+      maxImpactAtMs: maxMs,
+      hasAnyBallisticImpact: ballisticClockMs >= minMs,
+    };
+  }, [launchedTimings, ballisticClockMs]);
+
+  // Aperçu temps réel de la fenêtre de tir et du nombre d'impacts en cours pour la barre latérale
+  const multiStrikeFlightSummary = useMemo(() => {
+    if (simulationMode !== 'ballistic' || !origin || activeStrikeTargets.length === 0) {
+      return undefined;
+    }
+    const profile = resolveVectorFlightProfile(launchParams);
+    const computed = computeMultiStrikeTimings(origin, activeStrikeTargets, profile.speedKmh, profile.maxRangeKm);
+    const inRangeDurations = computed.timings.filter((t) => t.inRange).map((t) => t.flightDurationMin);
+    const minFlightMin = inRangeDurations.length > 0 ? Math.min(...inRangeDurations) : 0;
+    const maxFlightMin = inRangeDurations.length > 0 ? Math.max(...inRangeDurations) : 0;
+    const impactedCount = strikeBallisticStates
+      ? Object.values<StrikeBallisticStatus>(strikeBallisticStates).filter((s) => s.inRange && s.detonationTimeMs !== null).length
+      : 0;
+    return {
+      totalCount: computed.timings.length,
+      inRangeCount: computed.inRangeCount,
+      minFlightMin,
+      maxFlightMin,
+      impactedCount,
+    };
+  }, [simulationMode, origin, activeStrikeTargets, launchParams, strikeBallisticStates]);
+
   const startLaunchSequence = () => {
-    if (!target) return;
+    if (!target || activeStrikeTargets.length === 0) return;
     setBallisticError(null);
 
-    // S'assurer d'annuler tout vol ou animation balistique en arrière-plan
     if (launchAnimRef.current !== null) {
       cancelAnimationFrame(launchAnimRef.current);
       launchAnimRef.current = null;
     }
 
-    // En mode instantané ou s'il n'y a pas d'origine, l'impact se produit immédiatement sans délai de trajectoire
+    // En mode instantané ou sans origine définie, la détonation reste immédiate
     if (simulationMode === 'instant' || !origin) {
+      setLaunchedTimings([]);
       setFlightProgress(1);
       triggerDetonation(true);
       return;
     }
 
-    // Geodesic distance using Haversine formula
-    const distKm = haversineKm(origin.lat, origin.lng, target.lat, target.lng);
-
     // Profil balistique canonique partagé entre la sidebar, la trajectoire 3D et le lancement
     const profile = resolveVectorFlightProfile(launchParams);
+    const schedule = computeMultiStrikeTimings(origin, activeStrikeTargets, profile.speedKmh, profile.maxRangeKm);
 
-    // Vérification de portée sans window.alert (bloqué en iframe)
-    if (distKm > profile.maxRangeKm) {
+    if (schedule.inRangeCount === 0) {
       soundEngine.playAlert();
-      setBallisticError(`Portée insuffisante : ${Math.round(distKm).toLocaleString('fr-FR')} km requis pour ${profile.maxRangeKm.toLocaleString('fr-FR')} km max.`);
+      const nearestDist = Math.min(...schedule.timings.map((t) => t.distanceKm));
+      setBallisticError(`Portée insuffisante : ${Math.round(nearestDist).toLocaleString('fr-FR')} km requis pour ${profile.maxRangeKm.toLocaleString('fr-FR')} km max.`);
       setFlightProgress(0);
+      setLaunchedTimings([]);
+      setIsBallisticRunning(false);
       return;
     }
 
-    // Reset any previous sequence
+    if (schedule.inRangeCount < schedule.timings.length) {
+      const skipped = schedule.timings.length - schedule.inRangeCount;
+      setBallisticError(`${skipped} cible(s) hors de portée max (${profile.maxRangeKm.toLocaleString('fr-FR')} km) exclue(s) du tir.`);
+    }
+
+    // Mémorise la puissance et la nature eau/terre de chaque ogive pour le déclenchement sonore échelonné
+    const audioMeta: Record<string, { effectiveYield: number; isWater: boolean }> = {};
+    activeStrikeTargets.forEach((s) => {
+      audioMeta[s.id] = {
+        effectiveYield: s.effectiveYield,
+        isWater: s.id === 'current-target' ? targetDetails.isWater : false,
+      };
+    });
+    strikeAudioMetaRef.current = audioMeta;
+
+    triggeredImpactsRef.current.clear();
+    triggeredGeigerRef.current.clear();
+    ballisticClockRef.current = 0;
+
+    setLaunchedTimings(schedule.timings);
+    setBallisticClockMs(0);
     setFlightProgress(0.01);
+    setDetonationTimeMs(0);
+    setIsDetonationAnimating(false);
+    setIsDetonationPaused(false);
+    setIsBallisticPaused(false);
+    setIsBallisticRunning(true);
+
     soundEngine.playMissileLaunch();
-
-    // Calculated flight time in minutes
-    const fTime = flightTimeMin(distKm, profile.speedKmh);
-    
-    // Map flight time to visual duration compressed between 4000ms & 6000ms
-    // Short ranges/speeds are faster (~4000ms), long ranges are slower (~6000ms)
-    const minTime = 5; // minutes
-    const maxTime = 600; // minutes
-    const ratio = Math.min(Math.max((fTime - minTime) / (maxTime - minTime), 0), 1);
-    const durationMs = 4000 + ratio * 2000;
-    
-    const startTime = performance.now();
-    
-    const animate = (time: number) => {
-      const elapsed = time - startTime;
-      const progress = elapsed / durationMs;
-      
-      if (progress >= 1) {
-        setFlightProgress(1); // Detonation triggers
-        triggerDetonation(true); // Start the dynamic detonation propagation animation + audio
-        launchAnimRef.current = null;
-      } else {
-        setFlightProgress(progress);
-        launchAnimRef.current = requestAnimationFrame(animate);
-      }
-    };
-    
-    launchAnimRef.current = requestAnimationFrame(animate);
   };
-
-  const effectiveYield = weapon.id === 'custom' ? customYield : weapon.yieldKt;
   
   const radii = useMemo(() => calculateBlastRadii(effectiveYield, environmentParams.explosionType, environmentParams.manningN), [effectiveYield, environmentParams.explosionType, environmentParams.manningN]);
 
@@ -434,8 +521,69 @@ export default function App() {
     );
   }, [target, radii, weapon.weaponType, autoGeoData]);
 
-  // Play/Pause/Replay detonation animation loop that drives the map overlays
+  // Horloge unifiée de vol + détonations échelonnées en mode balistique
   useEffect(() => {
+    if (simulationMode !== 'ballistic' || !isBallisticRunning || isBallisticPaused || launchedTimings.length === 0) {
+      return;
+    }
+
+    const activeTimings = launchedTimings.filter((t) => t.inRange);
+    if (activeTimings.length === 0) {
+      setIsBallisticRunning(false);
+      return;
+    }
+
+    const firstImpact = Math.min(...activeTimings.map((t) => t.impactAtMs));
+    const lastImpact = Math.max(...activeTimings.map((t) => t.impactAtMs));
+    const totalEndMs = lastImpact + 10000;
+
+    let animId: number;
+    let lastTime = performance.now();
+
+    const step = () => {
+      const now = performance.now();
+      const dt = Math.min(100, Math.max(0, now - lastTime));
+      lastTime = now;
+
+      const nextClock = Math.min(totalEndMs, ballisticClockRef.current + dt);
+      ballisticClockRef.current = nextClock;
+
+      // Déclenche individuellement le son et les retombées Geiger de chaque ogive au moment réel de son impact
+      for (const item of activeTimings) {
+        if (nextClock >= item.impactAtMs && !triggeredImpactsRef.current.has(item.id)) {
+          triggeredImpactsRef.current.add(item.id);
+          const meta = strikeAudioMetaRef.current[item.id];
+          soundEngine.playDetonation(meta?.effectiveYield ?? effectiveYield, weapon.weaponType, meta?.isWater ?? false);
+        }
+        if (
+          environmentParams.explosionType === 'surface' &&
+          nextClock >= item.impactAtMs + 5000 &&
+          !triggeredGeigerRef.current.has(item.id)
+        ) {
+          triggeredGeigerRef.current.add(item.id);
+          soundEngine.playGeigerBurst(6);
+        }
+      }
+
+      setBallisticClockMs(nextClock);
+      setFlightProgress(lastImpact > 0 ? Math.min(1, nextClock / lastImpact) : 1);
+      setDetonationTimeMs(nextClock >= firstImpact ? Math.min(10000, nextClock - firstImpact) : 0);
+
+      if (nextClock >= totalEndMs) {
+        setIsBallisticRunning(false);
+        return;
+      }
+
+      animId = requestAnimationFrame(step);
+    };
+
+    animId = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(animId);
+  }, [simulationMode, isBallisticRunning, isBallisticPaused, launchedTimings, effectiveYield, weapon.weaponType, environmentParams.explosionType]);
+
+  // Play/Pause/Replay detonation animation loop that drives the map overlays in instant / fallback mode
+  useEffect(() => {
+    if (simulationMode === 'ballistic' && launchedTimings.length > 0) return;
     if (!isDetonationAnimating || isDetonationPaused) return;
 
     let animId: number;
@@ -469,7 +617,7 @@ export default function App() {
 
     animId = requestAnimationFrame(frame);
     return () => cancelAnimationFrame(animId);
-  }, [isDetonationAnimating, isDetonationPaused, environmentParams.explosionType]);
+  }, [simulationMode, launchedTimings.length, isDetonationAnimating, isDetonationPaused, environmentParams.explosionType]);
 
   // Automatically trigger detonation in instant mode when relevant inputs change to restart the animation
   useEffect(() => {
@@ -548,6 +696,72 @@ export default function App() {
     };
   }, [detonationTimeMs, effectiveYield]);
 
+  const isBallisticSalvoMode = simulationMode === 'ballistic' && launchedTimings.length > 0;
+  const hudDurationMs = isBallisticSalvoMode
+    ? Math.max(10000, (maxImpactAtMs - minImpactAtMs) + 10000)
+    : 10000;
+  const hudTimeMs = isBallisticSalvoMode
+    ? Math.max(0, Math.min(hudDurationMs, ballisticClockMs - minImpactAtMs))
+    : detonationTimeMs;
+  const isHudCompleted = hudTimeMs >= hudDurationMs;
+  const isHudPlaying = isBallisticSalvoMode ? (isBallisticRunning && !isBallisticPaused) : isDetonationAnimating;
+  const isHudPaused = isBallisticSalvoMode ? isBallisticPaused : isDetonationPaused;
+
+  const replayHudSequence = () => {
+    if (isBallisticSalvoMode) {
+      triggeredImpactsRef.current.clear();
+      triggeredGeigerRef.current.clear();
+      ballisticClockRef.current = 0;
+      setBallisticClockMs(0);
+      setFlightProgress(0.01);
+      setDetonationTimeMs(0);
+      setIsBallisticPaused(false);
+      setIsBallisticRunning(true);
+      soundEngine.playMissileLaunch();
+    } else {
+      triggerDetonation(true);
+    }
+  };
+
+  const toggleHudPlayPause = () => {
+    if (isHudCompleted) {
+      replayHudSequence();
+      return;
+    }
+    soundEngine.playUiClick();
+    if (isBallisticSalvoMode) {
+      setIsBallisticPaused((prev) => !prev);
+      if (!isBallisticRunning) {
+        setIsBallisticRunning(true);
+      }
+    } else {
+      setIsDetonationPaused((prev) => !prev);
+      if (!isDetonationAnimating) {
+        setIsDetonationAnimating(true);
+      }
+    }
+  };
+
+  const scrubHudTimeline = (newVal: number) => {
+    if (isBallisticSalvoMode) {
+      const newClock = minImpactAtMs + newVal;
+      ballisticClockRef.current = newClock;
+      setBallisticClockMs(newClock);
+      setFlightProgress(maxImpactAtMs > 0 ? Math.min(1, newClock / maxImpactAtMs) : 1);
+      setDetonationTimeMs(Math.min(10000, newVal));
+      setIsBallisticPaused(true);
+      if (!isBallisticRunning && newClock < maxImpactAtMs + 10000) {
+        setIsBallisticRunning(true);
+      }
+    } else {
+      setDetonationTimeMs(newVal);
+      setIsDetonationPaused(true);
+      if (!isDetonationAnimating) {
+        setIsDetonationAnimating(true);
+      }
+    }
+  };
+
   // Si on est en mode balistique, on reset le vol lorsqu'on bascule
   const handleModeSwitch = (mode: 'instant' | 'ballistic') => {
     setSimulationMode(mode);
@@ -562,7 +776,30 @@ export default function App() {
     }
   };
 
-  const isDetonated = simulationMode === 'instant' || flightProgress === 1;
+  const isDetonated = simulationMode === 'instant' || (isBallisticSalvoMode ? hasAnyBallisticImpact : flightProgress === 1);
+
+  // Calcule l'opacité maximale du flash gamma en tenant compte des impacts échelonnés
+  const gammaFlashOpacity = useMemo(() => {
+    if (!target) return 0;
+    if (simulationMode === 'ballistic' && strikeBallisticStates) {
+      let maxOpacity = 0;
+      for (const st of Object.values<StrikeBallisticStatus>(strikeBallisticStates)) {
+        if (st.inRange && st.detonationTimeMs !== null && st.detonationTimeMs < 80) {
+          const op = st.detonationTimeMs < 40
+            ? st.detonationTimeMs / 40
+            : Math.max(0, 1 - (st.detonationTimeMs - 40) / 40);
+          if (op > maxOpacity) maxOpacity = op;
+        }
+      }
+      return maxOpacity;
+    }
+    if (isDetonated && detonationTimeMs < 80) {
+      return detonationTimeMs < 40
+        ? detonationTimeMs / 40
+        : Math.max(0, 1 - (detonationTimeMs - 40) / 40);
+    }
+    return 0;
+  }, [target, simulationMode, strikeBallisticStates, isDetonated, detonationTimeMs]);
 
   const handleToggleSound = () => {
     const next = !soundEnabled;
@@ -590,7 +827,10 @@ export default function App() {
         selectionMode={selectionMode}
         setSelectionMode={setSelectionMode}
         origin={origin}
-        setOrigin={setOrigin}
+        setOrigin={(nextOrigin) => {
+          cancelFlight();
+          setOrigin(nextOrigin);
+        }}
         target={target}
         launchParams={launchParams}
         setLaunchParams={setLaunchParams}
@@ -607,13 +847,20 @@ export default function App() {
         isSidebarOpen={isSidebarOpen}
         setIsSidebarOpen={setIsSidebarOpen}
         multiStrikeMode={multiStrikeMode}
-        setMultiStrikeMode={setMultiStrikeMode}
+        setMultiStrikeMode={(nextMode) => {
+          cancelFlight();
+          setMultiStrikeMode(nextMode);
+        }}
         pastStrikesCount={pastStrikes.length}
-        onClearPastStrikes={() => setPastStrikes([])}
+        onClearPastStrikes={() => {
+          cancelFlight();
+          setPastStrikes([]);
+        }}
         casualtyReport={casualtyReport}
         onMobileCollapsedChange={setIsMobileSidebarCollapsed}
         ballisticError={ballisticError}
         onClearBallisticError={() => setBallisticError(null)}
+        multiStrikeFlightSummary={multiStrikeFlightSummary}
       />
 
       {/* Sidebar Toggle Handle for Desktop */}
@@ -647,6 +894,7 @@ export default function App() {
           isDetonationAnimating={isDetonationAnimating}
           isDetonationPaused={isDetonationPaused}
           pastStrikes={pastStrikes}
+          strikeBallisticStates={strikeBallisticStates}
           soundEnabled={soundEnabled}
           onToggleSound={handleToggleSound}
           onReturnToPortal={() => setCurrentTab('landing')}
@@ -670,14 +918,10 @@ export default function App() {
         />
         
         {/* FLASH GAMMA INTEGRATED SCREEN-SPACE ANIMATED FLASH */}
-        {target && isDetonated && detonationTimeMs < 80 && (
+        {gammaFlashOpacity > 0 && (
           <div 
             className="fixed inset-0 bg-white pointer-events-none z-50 transition-opacity duration-75"
-            style={{ 
-              opacity: detonationTimeMs < 40 
-                ? detonationTimeMs / 40 
-                : Math.max(0, 1 - (detonationTimeMs - 40) / 40)
-            }}
+            style={{ opacity: gammaFlashOpacity }}
           />
         )}
 
@@ -696,7 +940,7 @@ export default function App() {
               title="Cliquer et glisser pour déplacer"
             >
               <div className="flex items-center gap-1.5 font-bold font-mono text-[9px] tracking-widest text-zinc-400">
-                <span className={`inline-flex rounded-full h-2 w-2 ${isDetonationAnimating ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                <span className={`inline-flex rounded-full h-2 w-2 ${isHudPlaying ? 'bg-red-500' : 'bg-emerald-500'}`} />
                 SIMULATEUR DE PROPAGATION CHRONOLOGIQUE
               </div>
               <div className="flex items-center gap-2">
@@ -729,23 +973,13 @@ export default function App() {
                 <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => {
-                      if (detonationTimeMs >= 10000) {
-                        triggerDetonation(true);
-                      } else {
-                        soundEngine.playUiClick();
-                        setIsDetonationPaused(!isDetonationPaused);
-                        if (!isDetonationAnimating) {
-                          setIsDetonationAnimating(true);
-                        }
-                      }
-                    }}
+                    onClick={toggleHudPlayPause}
                     className="p-1.5 px-3 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-100 transition-colors shrink-0 flex items-center justify-center border border-zinc-700/50 cursor-pointer"
                     style={{ width: '76px' }}
                   >
-                    {detonationTimeMs >= 10000 ? (
+                    {isHudCompleted ? (
                       <span className="text-[10px] font-mono font-bold uppercase tracking-wider">Rejouer</span>
-                    ) : isDetonationPaused ? (
+                    ) : isHudPaused ? (
                       <span className="text-[10px] font-mono font-bold uppercase tracking-wider">Play</span>
                     ) : (
                       <span className="text-[10px] font-mono font-bold uppercase tracking-wider">Pause</span>
@@ -756,24 +990,17 @@ export default function App() {
                     <input 
                       type="range" 
                       min="0" 
-                      max="10000" 
+                      max={Math.round(hudDurationMs)} 
                       aria-label="Chronologie de la détonation"
-                      value={Math.round(detonationTimeMs)} 
-                      onChange={(e) => {
-                        const newVal = parseInt(e.target.value, 10);
-                        setDetonationTimeMs(newVal);
-                        setIsDetonationPaused(true);
-                        if (!isDetonationAnimating) {
-                          setIsDetonationAnimating(true);
-                        }
-                      }}
+                      value={Math.round(hudTimeMs)} 
+                      onChange={(e) => scrubHudTimeline(parseInt(e.target.value, 10))}
                       className="w-full h-1.5 bg-zinc-800 accent-red-500 rounded-lg appearance-none cursor-pointer"
                     />
                   </div>
 
                   <button
                     type="button"
-                    onClick={() => triggerDetonation(true)}
+                    onClick={replayHudSequence}
                     aria-label="Recommencer la détonation"
                     className="p-1.5 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white transition-colors shrink-0 border border-zinc-700/50 flex items-center justify-center cursor-pointer"
                     title="Recommencer la détonation"
@@ -798,7 +1025,7 @@ export default function App() {
                   <div className="flex items-center justify-between text-[9px] text-zinc-400 font-mono tabular-nums">
                     <span>Vitesse d'animation compressée</span>
                     <span className="font-semibold text-zinc-300">
-                      {detonationTimeMs < 10000 ? `${(detonationTimeMs / 1000).toFixed(2)}s / 10.00s` : "ÉQUILIBRE REJOINT"}
+                      {!isHudCompleted ? `${(hudTimeMs / 1000).toFixed(2)}s / ${(hudDurationMs / 1000).toFixed(2)}s` : "ÉQUILIBRE REJOINT"}
                     </span>
                   </div>
                 </div>
@@ -854,7 +1081,7 @@ export default function App() {
                 <div className="w-12 h-1 bg-zinc-800 rounded-full mx-auto" />
                 <div className="flex items-center justify-between mt-1 pb-2 border-b border-zinc-900 gap-2">
                   <div className="flex items-center gap-1.5 font-bold font-mono text-[10px] tracking-wider text-zinc-300">
-                    <span className={`inline-flex rounded-full h-2 w-2 ${isDetonationAnimating ? 'bg-red-500' : 'bg-emerald-500'}`} />
+                    <span className={`inline-flex rounded-full h-2 w-2 ${isHudPlaying ? 'bg-red-500' : 'bg-emerald-500'}`} />
                     PROPAGATION
                   </div>
                   <div className="font-mono tabular-nums text-xs font-bold text-red-400 bg-red-950/20 px-2 py-0.5 rounded border border-red-900/40">
@@ -880,44 +1107,27 @@ export default function App() {
               <div className="flex items-center gap-3 shrink-0">
                 <button
                   type="button"
-                  onClick={() => {
-                    if (detonationTimeMs >= 10000) {
-                      triggerDetonation(true);
-                    } else {
-                      soundEngine.playUiClick();
-                      setIsDetonationPaused(!isDetonationPaused);
-                      if (!isDetonationAnimating) {
-                        setIsDetonationAnimating(true);
-                      }
-                    }
-                  }}
+                  onClick={toggleHudPlayPause}
                   className="min-h-11 px-4 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-100 transition-colors shrink-0 text-[10px] font-mono font-bold cursor-pointer"
                 >
-                  {detonationTimeMs >= 10000 ? "REJOUER" : isDetonationPaused ? "PLAY" : "PAUSE"}
+                  {isHudCompleted ? "REJOUER" : isHudPaused ? "PLAY" : "PAUSE"}
                 </button>
 
                 <div className="flex-1 flex items-center">
                   <input 
                     type="range" 
                     min="0" 
-                    max="10000" 
+                    max={Math.round(hudDurationMs)} 
                     aria-label="Curseur temporel de détonation"
-                    value={Math.round(detonationTimeMs)} 
-                    onChange={(e) => {
-                      const newVal = parseInt(e.target.value, 10);
-                      setDetonationTimeMs(newVal);
-                      setIsDetonationPaused(true);
-                      if (!isDetonationAnimating) {
-                        setIsDetonationAnimating(true);
-                      }
-                    }}
+                    value={Math.round(hudTimeMs)} 
+                    onChange={(e) => scrubHudTimeline(parseInt(e.target.value, 10))}
                     className="w-full h-2 bg-zinc-800 accent-red-500 rounded-lg appearance-none cursor-pointer"
                   />
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => triggerDetonation(true)}
+                  onClick={replayHudSequence}
                   aria-label="Recommencer la détonation"
                   className="min-h-11 min-w-11 rounded-lg bg-zinc-800 border border-zinc-700 text-zinc-300 hover:text-white transition-colors shrink-0 flex items-center justify-center cursor-pointer"
                 >

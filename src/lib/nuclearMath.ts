@@ -1,4 +1,4 @@
-import { BlastRadii, WeaponConfig, DeliveryVector, DeliveryType, CasualtyReport, CasualtyDistancePoint, LaunchParams } from "../types";
+import { BlastRadii, WeaponConfig, DeliveryVector, DeliveryType, CasualtyReport, CasualtyDistancePoint, StrikeBallisticStatus, LaunchParams } from "../types";
 import { AutomaticGeoData } from "./geoDataFetcher";
 
 /**
@@ -706,6 +706,123 @@ export const haversineKm = (lat1: number, lon1: number, lat2: number, lon2: numb
 export const flightTimeMin = (distKm: number, speedKmh: number): number => {
     if (!speedKmh || speedKmh <= 0) return 0;
     return (distKm / speedKmh) * 60;
+};
+
+export interface StrikeTimingInput {
+    id: string;
+    target: { lng: number; lat: number };
+}
+
+export interface ComputedStrikeTiming {
+    id: string;
+    distanceKm: number;
+    flightDurationMin: number;
+    impactAtMs: number;
+    inRange: boolean;
+}
+
+/**
+ * Calcule le calendrier d'impact balistique de chaque cible proportionnellement
+ * à sa distance géodésique réelle (Haversine) par rapport à l'origine.
+ * Ainsi, à vitesse de vecteur constante, les cibles proches impactent avant les plus lointaines.
+ */
+export const computeMultiStrikeTimings = (
+    origin: { lng: number; lat: number },
+    strikes: StrikeTimingInput[],
+    speedKmh: number,
+    maxRangeKm: number
+): {
+    timings: ComputedStrikeTiming[];
+    minImpactAtMs: number;
+    maxImpactAtMs: number;
+    inRangeCount: number;
+} => {
+    if (strikes.length === 0) {
+        return { timings: [], minImpactAtMs: 0, maxImpactAtMs: 0, inRangeCount: 0 };
+    }
+
+    const raw = strikes.map((strike) => {
+        const distanceKm = haversineKm(origin.lat, origin.lng, strike.target.lat, strike.target.lng);
+        const flightDurationMin = flightTimeMin(distanceKm, speedKmh);
+        const inRange = distanceKm <= maxRangeKm;
+        return {
+            id: strike.id,
+            distanceKm,
+            flightDurationMin,
+            inRange,
+        };
+    });
+
+    const inRangeItems = raw.filter((item) => item.inRange);
+    const referenceItems = inRangeItems.length > 0 ? inRangeItems : raw;
+    const maxDistKm = Math.max(0, ...referenceItems.map((item) => item.distanceKm));
+    const maxFlightMin = flightTimeMin(maxDistKm, speedKmh);
+
+    // Compression temporelle visuelle cohérente (4 s à 6 s pour le trajet le plus long)
+    const minTime = 5;
+    const maxTime = 600;
+    const ratio = Math.min(Math.max((maxFlightMin - minTime) / (maxTime - minTime), 0), 1);
+    const maxVisualDurationMs = 4000 + ratio * 2000;
+
+    const timings: ComputedStrikeTiming[] = raw.map((item) => {
+        if (!item.inRange) {
+            return { ...item, impactAtMs: 0 };
+        }
+        const proportionalMs = maxDistKm > 0
+            ? Math.max(250, Math.round((item.distanceKm / maxDistKm) * maxVisualDurationMs))
+            : 250;
+        return {
+            ...item,
+            impactAtMs: proportionalMs,
+        };
+    });
+
+    const activeImpacts = timings.filter((t) => t.inRange).map((t) => t.impactAtMs);
+    const minImpactAtMs = activeImpacts.length > 0 ? Math.min(...activeImpacts) : 0;
+    const maxImpactAtMs = activeImpacts.length > 0 ? Math.max(...activeImpacts) : 0;
+
+    return {
+        timings,
+        minImpactAtMs,
+        maxImpactAtMs,
+        inRangeCount: inRangeItems.length,
+    };
+};
+
+/**
+ * Évalue à l'instant `clockMs` la progression de vol (0..1) et l'âge de détonation
+ * (`null` avant impact, `0..10000 ms` après impact) pour chaque cible d'une salve.
+ */
+export const evaluateBallisticClock = (
+    timings: ComputedStrikeTiming[],
+    clockMs: number
+): Record<string, StrikeBallisticStatus> => {
+    const safeClock = Math.max(0, Number.isFinite(clockMs) ? clockMs : 0);
+    const result: Record<string, StrikeBallisticStatus> = {};
+
+    for (const item of timings) {
+        if (!item.inRange) {
+            result[item.id] = {
+                ...item,
+                progress: 0,
+                detonationTimeMs: null,
+            };
+            continue;
+        }
+
+        const progress = item.impactAtMs > 0 ? Math.min(1, safeClock / item.impactAtMs) : 1;
+        const detonationTimeMs = safeClock >= item.impactAtMs
+            ? Math.min(10000, safeClock - item.impactAtMs)
+            : null;
+
+        result[item.id] = {
+            ...item,
+            progress,
+            detonationTimeMs,
+        };
+    }
+
+    return result;
 };
 
 /**

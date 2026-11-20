@@ -113,3 +113,14 @@ export interface CasualtyDistancePoint {
     lightInjures: number;
     total: number;
 }
+
+export interface StrikeBallisticStatus {
+    id: string;
+    distanceKm: number;
+    flightDurationMin: number;
+    impactAtMs: number;
+    inRange: boolean;
+    progress: number;
+    detonationTimeMs: number | null;
+}
+

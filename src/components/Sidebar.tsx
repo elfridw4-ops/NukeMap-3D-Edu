@@ -49,6 +49,13 @@ interface SidebarProps {
   onMobileCollapsedChange?: (collapsed: boolean) => void;
   ballisticError?: string | null;
   onClearBallisticError?: () => void;
+  multiStrikeFlightSummary?: {
+    totalCount: number;
+    inRangeCount: number;
+    minFlightMin: number;
+    maxFlightMin: number;
+    impactedCount: number;
+  };
 }
 
 export function Sidebar({
@@ -82,7 +89,8 @@ export function Sidebar({
   casualtyReport,
   onMobileCollapsedChange,
   ballisticError,
-  onClearBallisticError
+  onClearBallisticError,
+  multiStrikeFlightSummary
 }: SidebarProps) {
   const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
     if (typeof window !== 'undefined') {
@@ -186,6 +194,7 @@ export function Sidebar({
           setWeapon={setWeapon}
           ballisticError={ballisticError}
           onClearBallisticError={onClearBallisticError}
+          multiStrikeFlightSummary={multiStrikeFlightSummary}
         />
 
         {/* Environment & Volatility */}

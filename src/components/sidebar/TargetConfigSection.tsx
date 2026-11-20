@@ -43,6 +43,13 @@ export interface TargetConfigSectionProps {
   setWeapon: (weapon: WeaponConfig) => void;
   ballisticError?: string | null;
   onClearBallisticError?: () => void;
+  multiStrikeFlightSummary?: {
+    totalCount: number;
+    inRangeCount: number;
+    minFlightMin: number;
+    maxFlightMin: number;
+    impactedCount: number;
+  };
 }
 
 export function TargetConfigSection({
@@ -69,7 +76,8 @@ export function TargetConfigSection({
   onClearPastStrikes,
   setWeapon,
   ballisticError,
-  onClearBallisticError
+  onClearBallisticError,
+  multiStrikeFlightSummary
 }: TargetConfigSectionProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -82,7 +90,10 @@ export function TargetConfigSection({
     : 0;
   const flightProfile = resolveVectorFlightProfile(launchParams);
   const sidebarSelectedVec = VECTORS.find(v => v.id === (launchParams.vectorId || 'icbm')) || VECTORS[0];
-  const buttonOutOfRange = sidebarDistanceKm > flightProfile.maxRangeKm;
+  const isMultiSalvo = multiStrikeMode && !!multiStrikeFlightSummary && multiStrikeFlightSummary.totalCount > 1;
+  const buttonOutOfRange = isMultiSalvo
+    ? multiStrikeFlightSummary.inRangeCount === 0
+    : sidebarDistanceKm > flightProfile.maxRangeKm;
 
   const handleSearch = async () => {
     if (!searchQuery) return;
@@ -282,8 +293,15 @@ export function TargetConfigSection({
                   const activeSpeed = flightProfile.speedKmh;
                   const activeAltitudeKm = flightProfile.altitudeKm;
 
-                  const isOutOfRange = distanceKm > activeRange;
-                  const flightDurationMin = distanceKm > 0 ? flightTimeMin(distanceKm, activeSpeed) : 0;
+                  const isOutOfRange = isMultiSalvo
+                    ? multiStrikeFlightSummary.inRangeCount === 0
+                    : distanceKm > activeRange;
+                  const hasPartialOutOfRange = isMultiSalvo
+                    && multiStrikeFlightSummary.inRangeCount > 0
+                    && multiStrikeFlightSummary.inRangeCount < multiStrikeFlightSummary.totalCount;
+                  const flightDurationMin = isMultiSalvo
+                    ? multiStrikeFlightSummary.maxFlightMin
+                    : (distanceKm > 0 ? flightTimeMin(distanceKm, activeSpeed) : 0);
 
                   const formatDuration = (totalMins: number) => {
                     if (totalMins <= 0) return "0 min 00 sec";
@@ -432,9 +450,23 @@ export function TargetConfigSection({
                           <span className="text-zinc-200 font-semibold">{distanceKm > 0 ? `${Math.round(distanceKm).toLocaleString('fr-FR')} km` : "N/A"}</span>
                         </div>
                         <div className="flex justify-between items-center">
-                          <span className="text-zinc-400">Temps de vol :</span>
-                          <span className="text-blue-400 font-semibold">{distanceKm > 0 ? formatDuration(flightDurationMin) : "N/A"}</span>
+                          <span className="text-zinc-400">{isMultiSalvo ? "Fenêtre de tir :" : "Temps de vol :"}</span>
+                          <span className="text-blue-400 font-semibold text-right">
+                            {isMultiSalvo && origin
+                              ? (multiStrikeFlightSummary.inRangeCount > 0
+                                  ? `${formatDuration(multiStrikeFlightSummary.minFlightMin)} → ${formatDuration(multiStrikeFlightSummary.maxFlightMin)}`
+                                  : "N/A")
+                              : (distanceKm > 0 ? formatDuration(flightDurationMin) : "N/A")}
+                          </span>
                         </div>
+                        {isMultiSalvo && origin && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-zinc-400">Salve multi-cibles :</span>
+                            <span className="text-sky-400 font-semibold">
+                              {multiStrikeFlightSummary.inRangeCount}/{multiStrikeFlightSummary.totalCount} à portée
+                            </span>
+                          </div>
+                        )}
                         <div className="flex justify-between items-center text-zinc-400">
                           <span className="text-zinc-400">Vecteur :</span>
                           <span className="text-zinc-200 text-right text-[10px] truncate max-w-[130px]">{selectedVec.name}</span>
@@ -453,7 +485,13 @@ export function TargetConfigSection({
                           </div>
                         )}
 
-                        {distanceKm > 0 && flightDurationMin < 10 && (
+                        {hasPartialOutOfRange && (
+                          <div role="status" className="p-2 bg-amber-950/30 border border-amber-800/50 text-amber-200 text-[10px] rounded-md mt-1 leading-normal font-sans">
+                            <strong>Portée partielle :</strong> {multiStrikeFlightSummary.totalCount - multiStrikeFlightSummary.inRangeCount} cible(s) hors rayon max ({activeRange.toLocaleString('fr-FR')} km).
+                          </div>
+                        )}
+
+                        {((isMultiSalvo && multiStrikeFlightSummary.minFlightMin > 0 && multiStrikeFlightSummary.minFlightMin < 10) || (!isMultiSalvo && distanceKm > 0 && flightDurationMin < 10)) && (
                           <div className="p-2 bg-red-950/40 border border-red-500/30 text-red-300 text-[10px] rounded-md font-sans flex items-center justify-center gap-1.5 leading-normal">
                             <AlertTriangle className="w-3.5 h-3.5 text-red-400 shrink-0" />
                             <span className="font-bold tracking-wide">FENÊTRE DE RÉACTION CRITIQUE (&lt; 10 min)</span>
@@ -464,12 +502,16 @@ export function TargetConfigSection({
                       {/* Vol en temps réel HUD */}
                       {flightProgress > 0 && flightProgress < 1 && (
                         <div className="p-3 bg-red-950/20 border border-red-900/30 rounded-lg space-y-3 font-sans shadow-inner animate-pulse">
-                          <div className="flex justify-between items-center text-xs border-b border-red-900/20 pb-1.5">
+                          <div className="flex justify-between items-center text-xs border-b border-red-900/20 pb-1.5 gap-2">
                             <span className="text-[10px] text-red-400 font-bold uppercase tracking-widest flex items-center gap-1">
                               <span className="w-2 h-2 bg-red-500 rounded-full animate-ping" />
                               VOL ACTIF
                             </span>
-                            <span className="font-mono text-red-300 font-bold">{countdownText} restant</span>
+                            <span className="font-mono text-red-300 font-bold text-right">
+                              {isMultiSalvo
+                                ? `${multiStrikeFlightSummary.impactedCount}/${multiStrikeFlightSummary.inRangeCount} impacts • ${countdownText}`
+                                : `${countdownText} restant`}
+                            </span>
                           </div>
 
                           {/* 3-phase progression display */}
@@ -716,7 +758,11 @@ export function TargetConfigSection({
                   >
                     <span className="relative z-10 flex items-center justify-center gap-2">
                        <Rocket className={cn("w-4 h-4", flightProgress > 0 && flightProgress < 1 ? "animate-pulse" : "")} />
-                       {flightProgress > 0 && flightProgress < 1 ? "Séquence en cours..." : buttonOutOfRange ? "Cible hors de portée" : "Lancer la Séquence"}
+                       {flightProgress > 0 && flightProgress < 1
+                         ? "Séquence en cours..."
+                         : buttonOutOfRange
+                           ? (isMultiSalvo ? "Aucune cible à portée" : "Cible hors de portée")
+                           : (isMultiSalvo ? `Lancer la Salve (${multiStrikeFlightSummary.inRangeCount})` : "Lancer la Séquence")}
                     </span>
                     {flightProgress > 0 && flightProgress < 1 && (
                       <div className="absolute left-0 bottom-0 h-1 bg-red-400" style={{ width: `${flightProgress * 100}%` }} />

@@ -124,3 +124,11 @@ Le projet est développé sur une base d'application moderne réactive Single Pa
     * Création de `ProceduralSoundEngine` synthétisant sans fichier externe les impacts (calibrés par puissance `kt/Mt` et milieu terre/mer), le souffle de lancement balistique, les bips de verrouillage cible/origine, les crépitements Geiger des retombées, les alertes de portée et les retours tactiles UI.
     * Ajout d'un bouton d'activation/coupure du son (`Volume2` / `VolumeX`, persisté dans `soundEnabled`) dans la barre supérieure unifiée.
   * **Impact** : Interface cartographique épurée sans widget décoratif, et immersion audio complète fonctionnant hors-ligne en PWA.
+
+* **2026-11-20 — Correction de l'Échelonnement Balistique Multi-Frappes Selon la Distance**
+  * **Modification** : Découplage des progressions de vol et des instants de détonation par cible en mode balistique + frappe multiple (`nuclearMath.ts`, `types.ts`, `App.tsx`, `Map.tsx`, `TargetConfigSection.tsx`).
+  * **Détail** :
+    * Ajout de `computeMultiStrikeTimings` et `evaluateBallisticClock` dans `src/lib/nuclearMath.ts` pour calculer pour chaque cible sa distance géodésique Haversine depuis `origin`, sa durée de vol réelle et son instant d'impact proportionnel (`impactAtMs`).
+    * Remplacement de l'avancement scalaire unique dans `App.tsx` par une horloge balistique de salve unifiée (`ballisticClockMs`, `strikeBallisticStates`) déclenchant individuellement détonations, flash gamma, crépitements Geiger et sons calibrés pour chaque ogive.
+    * Rendu indépendant dans `Map.tsx` de chaque trajectoire, panache, boule de feu, onde de souffle (`currentPsi`) et champignon selon `strikeBallisticStates[strike.id]`, et affichage de la fenêtre de salve (`X/Y à portée`, `min → max`) dans `TargetConfigSection.tsx`.
+  * **Impact** : Les cibles proches sont désormais frappées avant les cibles éloignées proportionnellement à leur distance par rapport au point d'origine, avec support des cibles mixtes à portée / hors portée.

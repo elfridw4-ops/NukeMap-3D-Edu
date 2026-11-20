@@ -7,6 +7,8 @@ import {
   calculateRichterScale,
   resolveVectorFlightProfile,
   calculateFalloutPlumeLengthKm,
+  computeMultiStrikeTimings,
+  evaluateBallisticClock,
   haversineKm,
   WEAPON_PRESETS,
 } from './nuclearMath';
@@ -153,5 +155,32 @@ describe('soundEngine & acoustic yield scaling', () => {
 
     soundEngine.setEnabled(true);
     expect(soundEngine.isEnabled()).toBe(true);
+  });
+});
+
+describe('multi-strike distance-proportional ballistic timings', () => {
+  it('assigns earlier impact timestamps to closer targets and maintains staggered progression', () => {
+    const origin = { lng: 2.3522, lat: 48.8566 };
+    const strikes = [
+      { id: 'near', target: { lng: -0.1278, lat: 51.5074 } },
+      { id: 'mid', target: { lng: 37.6173, lat: 55.7558 } },
+      { id: 'far', target: { lng: -74.006, lat: 40.7128 } },
+      { id: 'oob', target: { lng: 139.6503, lat: 35.6762 } },
+    ];
+
+    const schedule = computeMultiStrikeTimings(origin, strikes, 24000, 7000);
+    expect(schedule.inRangeCount).toBe(3);
+
+    const byId = Object.fromEntries(schedule.timings.map((t) => [t.id, t]));
+    expect(byId.near.impactAtMs).toBeLessThan(byId.mid.impactAtMs);
+    expect(byId.mid.impactAtMs).toBeLessThan(byId.far.impactAtMs);
+    expect(byId.oob.inRange).toBe(false);
+
+    const midStates = evaluateBallisticClock(schedule.timings, byId.near.impactAtMs + 250);
+    expect(midStates.near.progress).toBe(1);
+    expect(midStates.near.detonationTimeMs).toBe(250);
+    expect(midStates.far.progress).toBeLessThan(midStates.mid.progress);
+    expect(midStates.far.detonationTimeMs).toBeNull();
+    expect(midStates.oob.progress).toBe(0);
   });
 });

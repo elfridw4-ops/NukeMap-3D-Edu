@@ -8,6 +8,8 @@ import {
   calculateRichterScale,
   resolveVectorFlightProfile,
   calculateFalloutPlumeLengthKm,
+  computeMultiStrikeTimings,
+  evaluateBallisticClock,
   haversineKm,
   WEAPON_PRESETS,
 } from './nuclearMath';
@@ -128,4 +130,41 @@ test('computeDetonationSoundProfile scales acoustic duration with yield and runs
     soundEngine.playAlert();
     soundEngine.playUiClick();
   });
+});
+
+test('computeMultiStrikeTimings staggers impacts strictly by geodesic distance and evaluateBallisticClock tracks per-target state', () => {
+  // Origine : Paris (48.8566, 2.3522)
+  const origin = { lng: 2.3522, lat: 48.8566 };
+  const strikes = [
+    { id: 'near-london', target: { lng: -0.1278, lat: 51.5074 } },   // ~344 km
+    { id: 'mid-moscow', target: { lng: 37.6173, lat: 55.7558 } },    // ~2486 km
+    { id: 'far-nyc', target: { lng: -74.006, lat: 40.7128 } },       // ~5837 km
+    { id: 'oob-tokyo', target: { lng: 139.6503, lat: 35.6762 } },    // ~9715 km (hors portée 7000 km)
+  ];
+
+  const schedule = computeMultiStrikeTimings(origin, strikes, 24000, 7000);
+  assert.equal(schedule.inRangeCount, 3);
+
+  const london = schedule.timings.find((t) => t.id === 'near-london')!;
+  const moscow = schedule.timings.find((t) => t.id === 'mid-moscow')!;
+  const nyc = schedule.timings.find((t) => t.id === 'far-nyc')!;
+  const tokyo = schedule.timings.find((t) => t.id === 'oob-tokyo')!;
+
+  assert.equal(tokyo.inRange, false);
+  assert.ok(london.impactAtMs < moscow.impactAtMs);
+  assert.ok(moscow.impactAtMs < nyc.impactAtMs);
+  assert.ok(london.flightDurationMin < moscow.flightDurationMin);
+  assert.ok(moscow.flightDurationMin < nyc.flightDurationMin);
+
+  // Vérifie qu'à un instant intermédiaire, Londres a déjà détoné alors que Moscou et New York volent encore
+  const midClock = moscow.impactAtMs - 150;
+  const statesMid = evaluateBallisticClock(schedule.timings, midClock);
+  assert.equal(statesMid['near-london'].progress, 1);
+  assert.ok((statesMid['near-london'].detonationTimeMs ?? -1) > 0);
+  assert.ok(statesMid['mid-moscow'].progress < 1);
+  assert.equal(statesMid['mid-moscow'].detonationTimeMs, null);
+  assert.ok(statesMid['far-nyc'].progress < statesMid['mid-moscow'].progress);
+  assert.equal(statesMid['far-nyc'].detonationTimeMs, null);
+  assert.equal(statesMid['oob-tokyo'].progress, 0);
+  assert.equal(statesMid['oob-tokyo'].detonationTimeMs, null);
 });
