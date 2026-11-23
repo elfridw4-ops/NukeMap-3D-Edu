@@ -1,5 +1,11 @@
 ---
-description: Use when explicitly asked to determine whether the project is ready for production deployment. Verify build, configuration, security, data integrity, testing, observability, deployment, recovery, performance, and operational readiness before approvin
+workflow: w-production-readiness
+commande: release:check
+declencheurs:
+  - prêt pour la prod
+  - production readiness
+  - aptitude mise en production
+description: Use when explicitly asked to determine whether the project is ready for production deployment. Verify build, configuration, security, data integrity, testing, observability, deployment, recovery, performance, and operational readiness before approving
 ---
 
 

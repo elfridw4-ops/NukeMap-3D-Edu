@@ -1,0 +1,19 @@
+Critère,Poids,Score 1,Score 2,Score 3,Question à se poser
+Coût marginal par usage,3,≈0 FCFA (texte/DB),Faible (stockage/bande passante),Élevé (API IA / SMS / payout FedaPay),"Chaque utilisation me coûte-t-elle de l'argent réel ?"
+Valeur perçue utilisateur,3,Nice-to-have,Gain de temps notable,Résout un pain critique,"Le client paierait-il pour ça seul, en FCFA ?"
+Fréquence d'usage,2,Occasionnel,Hebdomadaire,Quotidien,"Feature d'habitude ou ponctuelle ?"
+Différenciation locale,2,Les concurrents béninois/régionaux l'ont,Rare en Afrique de l'Ouest,Unique sur le marché local,"C'est un argument de vente ICI ?"
+Risque d'abus si illimité,3,Nul,Modéré,Fort (multi-comptes, revente),"Un utilisateur peut-il m'exploser la facture ?"
+Effet de rétention,2,Aucun,Moyen,Fort (données/historique captif),"Partir = perdre quelque chose ?"
+Friction paiement,2,Impulse-buy possible (≤1 000 FCFA),Décision réfléchie (2 500-10 000),Nécessite validation hiérarchique,"Mobile Money rend-il l'achat immédiat possible ?"
+,,,,,
+VERDICTS (score pondéré /44),,,,,
+"< 18",,,,"GRATUIT — feature d'adoption"
+"18-26",,,,"GRATUIT LIMITÉ — quota mensuel en free, illimité en payant"
+"27-34",,,,"PREMIUM — cœur de la valeur payante, palier rond FCFA"
+"> 34",,,,"TIER SUPÉRIEUR OU ADD-ON à l'usage"
+,,,,,
+RÈGLES D'EXCEPTION (prioritaires),,,,,
+"Coût marginal=3 ET abus=3",,,,"QUOTA OBLIGATOIRE partout, même Enterprise"
+"Rétention=3",,,,"Jamais en gratuit : c'est le verrou anti-churn"
+"Friction paiement=3",,,,"Uniquement B2B/facture — pas de self-serve Mobile Money"

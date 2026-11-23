@@ -1,0 +1,42 @@
+{
+  "_meta": {
+    "version": "1.0.0",
+    "derniere_maj": "2026-09-30",
+    "regle_d_or": "AUCUN prix, quota ou nom de plan n'est écrit en dur ailleurs. Landing, dashboard, emails, FAQ et CGU lisent TOUS ce fichier. Modifier un prix = modifier ici, redeploy, fini.",
+    "devise_affichage": "EUR"
+  },
+  "plans": [
+    {
+      "id": "free",
+      "nom_public": "Découverte",
+      "prix_mensuel": 0,
+      "prix_annuel": 0,
+      "essai_jours": 0,
+      "description_vivante": "Pour tester la plateforme et créer l'habitude — volontairement limité pour que le passage au supérieur devienne naturel, pas frustrant.",
+      "quotas": { "exports_mois": 3, "projets": 1, "features_ia": false },
+      "badge": null
+    },
+    {
+      "id": "pro",
+      "nom_public": "Pro",
+      "prix_mensuel": 19,
+      "prix_annuel": 190,
+      "essai_jours": 14,
+      "description_vivante": "Le plan qu'on veut vendre : c'est lui qui porte le badge 'Populaire' et qui doit concentrer ~60% des conversions.",
+      "quotas": { "exports_mois": 100, "projets": 10, "features_ia": true },
+      "badge": "Populaire"
+    },
+    {
+      "id": "team",
+      "nom_public": "Équipe",
+      "prix_mensuel": 49,
+      "prix_annuel": 490,
+      "description_vivante": "Ancre haute : existe autant pour rendre le Pro raisonnable (effet d'ancrage) que pour les vraies équipes.",
+      "quotas": { "exports_mois": "illimité_raisonnable", "projets": "illimité", "features_ia": true, "seats_inclus": 5 },
+      "badge": null
+    }
+  ],
+  "emails": {
+    "regle": "Les templates d'emails injectent les prix depuis ce fichier via variables ({{plans.pro.prix_mensuel}}), jamais de prix tapé à la main."
+  }
+}

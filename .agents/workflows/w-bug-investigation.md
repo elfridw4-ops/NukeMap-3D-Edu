@@ -1,4 +1,10 @@
 ---
+workflow: w-bug-investigation
+commande: bug:investigate
+declencheurs:
+  - bug, anomalie, crash, régression
+  - investigation cause racine
+  - comportement inattendu
 description: Use when a bug, unexpected behavior, regression, crash, incorrect calculation, failed workflow, or inconsistent state is reported. Investigate the root cause systematically, reproduce when possible, make the smallest safe fix, and verify the result
 ---
 

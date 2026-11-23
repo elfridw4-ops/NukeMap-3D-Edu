@@ -1,4 +1,13 @@
 ---
+workflow: w-security-audit
+commande: audit:securite
+commandes_secondaires:
+  - audit:front
+  - audit:back
+declencheurs:
+  - audit de sécurité applicative
+  - révision vulnérabilités OWASP
+  - vérification auth, rôles, secrets, tokens
 description: Use when explicitly asked to audit application security, authentication, authorization, APIs, database access, multi-tenancy, secrets, storage, uploads, webhooks, payments, or security-sensitive code. Inspect first and report evidence-based findings 
 ---
 

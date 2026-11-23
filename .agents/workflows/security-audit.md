@@ -1,4 +1,9 @@
 ---
+workflow: security-audit
+commande: audit:securite
+declencheurs:
+  - audit sécurité synthétique
+  - revue sécurité applicative
 description: Use when implementing, reviewing, debugging, or auditing authentication, authorization, APIs, database access, uploads, payments, webhooks, secrets, multi-tenant isolation, or security-sensitive functionality. 
 ---
 

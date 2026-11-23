@@ -1,0 +1,18 @@
+Critère,Poids,Score 1,Score 2,Score 3,Question à se poser
+Coût marginal par usage,3,≈0€ (stockage texte),Faible (bande passante),Élevé (API IA / GPU),"Chaque utilisation me coûte-t-elle de l'argent ?"
+Valeur perçue utilisateur,3,Nice-to-have,Gain de temps notable,Résout un pain critique,"L'utilisateur paierait-il pour ça seul ?"
+Fréquence d'usage,2,Occasionnel,Hebdomadaire,Quotidien,"Feature d'habitude ou ponctuelle ?"
+Différenciation concurrence,2,Tout le monde l'a,Rare,Unique,"C'est un argument de vente ?"
+Risque d'abus si illimité,3,Nul,Modéré,Fort (scripts/scraping),"Un utilisateur peut-il m'exploser la facture ?"
+Effet de rétention,2,Aucun,Moyen,Forte (données/historique captif),"Partir = perdre quelque chose ?"
+,,,,,
+VERDICTS (score pondéré /40),,,,,
+"< 16",,,,"GRATUIT — feature d'adoption, mettre en plan free"
+"16-24",,,,"GRATUIT LIMITÉ — quota mensuel dans le free, illimité en payant"
+"25-31",,,,"PREMIUM — cœur de la proposition de valeur payante"
+"> 31",,,,"TIER SUPÉRIEUR OU ADD-ON — facturation à l'usage recommandée"
+,,,,,
+RÈGLES D'EXCEPTION (prioritaires sur le score),,,,,
+"Coût marginal = 3 ET risque d'abus = 3",,,,"QUOTA OBLIGATOIRE dans TOUS les plans, même Enterprise"
+"Effet rétention = 3",,,,"Jamais en gratuit : c'est ton verrou anti-churn"
+"Différenciation = 3 ET valeur = 3",,,,"Feature phare du plan cible — la mettre en avant sur la pricing page"

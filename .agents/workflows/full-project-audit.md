@@ -1,4 +1,9 @@
 ---
+workflow: full-project-audit
+commande: audit:full
+declencheurs:
+  - audit complet du projet
+  - revue globale 360
 description: Use when explicitly asked to perform a comprehensive audit of the project, including architecture, functionality, data integrity, security, UI/UX, accessibility, responsiveness, performance, testing, and production readiness.
 ---
 
