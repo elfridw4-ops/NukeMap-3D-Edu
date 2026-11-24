@@ -6,6 +6,9 @@ import {
   generateToroidalMushroomPoints,
   generateWilsonCloudData,
   computeMissileCameraViewState,
+  computeGroundObserverViewState,
+  computeOrbitalCameraViewState,
+  generate3DTsunamiWaveData,
 } from './visualEffects3d';
 import { EnvironmentParams } from '../types';
 
@@ -93,3 +96,145 @@ test('computeMissileCameraViewState tracks boost, apogee, terminal dive, and pos
   assert.equal(impact.longitude, target.lng);
   assert.equal(impact.latitude, target.lat);
 });
+
+test('computeGroundObserverViewState places low-angle observer looking toward ground zero', () => {
+  const small = computeGroundObserverViewState({
+    target: { lng: 2.3522, lat: 48.8566 },
+    lightBlastM: 4330,
+    fireballM: 730,
+    effectiveYield: 20,
+  });
+  const tsar = computeGroundObserverViewState({
+    target: { lng: 2.3522, lat: 48.8566 },
+    lightBlastM: 60000,
+    fireballM: 4600,
+    effectiveYield: 50000,
+  });
+
+  assert.ok(small.viewState.pitch >= 77 && small.viewState.pitch <= 83);
+  assert.ok(tsar.standoffKm > small.standoffKm, 'Larger yield should place observer farther out');
+  assert.ok(tsar.shockwaveArrivalSec > small.shockwaveArrivalSec);
+  assert.ok(Number.isFinite(small.observerLng) && Number.isFinite(small.observerLat));
+});
+
+test('computeOrbitalCameraViewState frames single targets and transatlantic corridors', () => {
+  const single = computeOrbitalCameraViewState({
+    target: { lng: 139.65, lat: 35.68 },
+    origin: null,
+    lightBlastM: 25000,
+  });
+  const corridor = computeOrbitalCameraViewState({
+    target: { lng: 139.65, lat: 35.68 },
+    origin: { lng: 2.3522, lat: 48.8566 },
+    lightBlastM: 25000,
+  });
+
+  assert.equal(single.pitch, 0);
+  assert.ok(corridor.zoom < single.zoom, 'Long ballistic corridor should zoom out further in orbit');
+  assert.ok(corridor.zoom >= 1.0 && corridor.zoom <= 3.5);
+});
+
+test('generate3DTsunamiWaveData builds continuous 3D wave surface mesh with valid normals and foam', () => {
+  const early = generate3DTsunamiWaveData({
+    target: { lng: 139.91, lat: 35.01 },
+    isWater: true,
+    isEligible: true,
+    shoreDistanceKm: 35,
+    oceanDepthM: 2200,
+    initialWaveHeightM: 28,
+    shoreWaveHeightM: 42,
+    runUpHeightM: 64,
+    floodRadiusM: 18000,
+    detonationTimeMs: 3200,
+  });
+  const later = generate3DTsunamiWaveData({
+    target: { lng: 139.91, lat: 35.01 },
+    isWater: true,
+    isEligible: true,
+    shoreDistanceKm: 35,
+    oceanDepthM: 2200,
+    initialWaveHeightM: 28,
+    shoreWaveHeightM: 42,
+    runUpHeightM: 64,
+    floodRadiusM: 18000,
+    detonationTimeMs: 6500,
+  });
+
+  assert.equal(early.active, true);
+  assert.ok(early.mesh !== null);
+  assert.ok(early.stats.vertexCount > 2000);
+  assert.ok(early.stats.triangleCount > 3000);
+  assert.ok(early.stats.maxElevationM >= 200);
+  assert.ok(early.stats.crestRadiiM.length >= 2);
+  assert.ok(early.foamPoints.length >= 220);
+
+  const pos = early.mesh!.attributes.POSITION.value;
+  const nrm = early.mesh!.attributes.NORMAL.value;
+  const col = early.mesh!.attributes.COLOR_0.value;
+  const idx = early.mesh!.indices.value;
+
+  assert.equal(pos.length, early.stats.vertexCount * 3);
+  assert.equal(nrm.length, early.stats.vertexCount * 3);
+  assert.equal(col.length, early.stats.vertexCount * 3);
+  assert.equal(idx.length, early.stats.triangleCount * 3);
+
+  // Vérifie que tous les indices sont dans les bornes et que les normales pointent vers le haut
+  for (let i = 0; i < idx.length; i += 47) {
+    assert.ok(idx[i] < early.stats.vertexCount, `Index out of bounds: ${idx[i]}`);
+  }
+  for (let v = 0; v < early.stats.vertexCount; v += 19) {
+    const nx = nrm[v * 3];
+    const ny = nrm[v * 3 + 1];
+    const nz = nrm[v * 3 + 2];
+    const normLen = Math.hypot(nx, ny, nz);
+    assert.ok(Math.abs(normLen - 1) < 1e-3, `Normal should be unit length, got ${normLen}`);
+    assert.ok(nz > 0, `Normal Z should point upward, got ${nz}`);
+  }
+
+  // Les vagues avancent radialement avec le temps
+  assert.ok(
+    later.stats.crestRadiiM[0] > early.stats.crestRadiiM[0],
+    `Expected leading wave radius to advance (${early.stats.crestRadiiM[0]} -> ${later.stats.crestRadiiM[0]})`
+  );
+
+  // Séparation des crêtes (la 1re vague devance la 2e)
+  assert.ok(
+    later.stats.crestRadiiM[0] > later.stats.crestRadiiM[1],
+    'Leading crest must stay ahead of trailing crest'
+  );
+
+  // En haute mer (shoreDistanceKm = 0), le train d'onde se propage librement au-delà de 15 km
+  const openOcean = generate3DTsunamiWaveData({
+    target: { lng: -120.9375, lat: -0.7031 },
+    isWater: true,
+    isEligible: true,
+    shoreDistanceKm: 0,
+    oceanDepthM: 4000,
+    initialWaveHeightM: 65,
+    shoreWaveHeightM: 80,
+    runUpHeightM: 90,
+    floodRadiusM: 25000,
+    detonationTimeMs: 4800,
+  });
+  assert.equal(openOcean.active, true);
+  assert.ok(
+    openOcean.stats.crestRadiiM[0] > 10_000,
+    `Expected open-ocean leading crest > 10km, got ${openOcean.stats.crestRadiiM[0]}`
+  );
+
+  const ineligible = generate3DTsunamiWaveData({
+    target: { lng: 2.3522, lat: 48.8566 },
+    isWater: false,
+    isEligible: false,
+    shoreDistanceKm: 188,
+    oceanDepthM: 2000,
+    initialWaveHeightM: 0,
+    shoreWaveHeightM: 0,
+    runUpHeightM: 0,
+    floodRadiusM: 0,
+    detonationTimeMs: 5000,
+  });
+  assert.equal(ineligible.active, false);
+  assert.equal(ineligible.mesh, null);
+});
+

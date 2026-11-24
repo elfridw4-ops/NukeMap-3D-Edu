@@ -15,8 +15,12 @@ import {
   computeBallisticImpactCoupling,
   ComputedStrikeTiming,
 } from './lib/nuclearMath';
-import { computeMissileCameraViewState } from './lib/visualEffects3d';
-import { WeaponConfig, LaunchParams, EnvironmentParams, PastStrike, StrikeBallisticStatus } from './types';
+import {
+  computeMissileCameraViewState,
+  computeGroundObserverViewState,
+  computeOrbitalCameraViewState,
+} from './lib/visualEffects3d';
+import { WeaponConfig, LaunchParams, EnvironmentParams, PastStrike, StrikeBallisticStatus, CameraPerspective } from './types';
 import {
   fetchAutomaticGeoData,
   DEFAULT_AUTOMATIC_GEO_DATA,
@@ -74,6 +78,9 @@ export default function App() {
   const [simulationMode, setSimulationMode] = useState<'instant' | 'ballistic'>('instant');
   const [flightProgress, setFlightProgress] = useState<number>(0);
   const [missileCameraEnabled, setMissileCameraEnabled] = usePersistedState<boolean>('missileCameraEnabled', false);
+  const [cameraPerspectiveRaw, setCameraPerspective] = usePersistedState<CameraPerspective>('cameraPerspective', 'tactical');
+  const cameraPerspective: CameraPerspective =
+    cameraPerspectiveRaw === 'ground' || cameraPerspectiveRaw === 'orbit' ? cameraPerspectiveRaw : 'tactical';
   // Message d'erreur balistique en ligne (remplace window.alert interdit en iframe)
   const [ballisticError, setBallisticError] = useState<string | null>(null);
 
@@ -384,10 +391,16 @@ export default function App() {
     if (!target) return;
     if (environmentParams.autoShoreDistance !== false) {
       const estimation = estimateClosestSeaDistanceKm(target.lat, target.lng);
-      setEnvironmentParams(prev => ({
-        ...prev,
-        shoreDistanceKm: targetDetails.isWater ? 0 : (autoGeoData?.shoreDistanceKm ?? estimation.distanceKm)
-      }));
+      const nextShoreKm = targetDetails.isWater
+        ? 0
+        : (autoGeoData?.shoreDistanceKm ?? estimation.distanceKm);
+      setEnvironmentParams(prev => {
+        if (prev.shoreDistanceKm === nextShoreKm) return prev;
+        return {
+          ...prev,
+          shoreDistanceKm: nextShoreKm
+        };
+      });
     }
   }, [target?.lat, target?.lng, targetDetails.isWater, environmentParams.autoShoreDistance, autoGeoData?.shoreDistanceKm]);
 
@@ -418,7 +431,8 @@ export default function App() {
       ...prev,
       longitude: lng,
       latitude: lat,
-      zoom: 10,
+      zoom: cameraPerspective === 'orbit' ? 2.35 : 10,
+      pitch: cameraPerspective === 'orbit' ? 0 : (prev?.pitch ?? 45),
       transitionDuration: 1000
     }));
     cancelFlight();
@@ -785,12 +799,24 @@ export default function App() {
       detonationTimeMs: trackedState.detonationTimeMs,
     });
 
-    setViewState({
-      longitude: cam.longitude,
-      latitude: cam.latitude,
-      zoom: cam.zoom,
-      pitch: cam.pitch,
-      bearing: cam.bearing,
+    setViewState((prev: any) => {
+      const unchanged =
+        prev &&
+        Math.abs((prev.longitude ?? 0) - cam.longitude) < 1e-4 &&
+        Math.abs((prev.latitude ?? 0) - cam.latitude) < 1e-4 &&
+        Math.abs((prev.zoom ?? 0) - cam.zoom) < 1e-4 &&
+        Math.abs((prev.pitch ?? 0) - cam.pitch) < 1e-3 &&
+        Math.abs((prev.bearing ?? 0) - cam.bearing) < 1e-3 &&
+        !prev.transitionDuration;
+
+      if (unchanged) return prev;
+      return {
+        longitude: cam.longitude,
+        latitude: cam.latitude,
+        zoom: cam.zoom,
+        pitch: Math.max(0, Math.min(85, cam.pitch)),
+        bearing: cam.bearing,
+      };
     });
   }, [
     missileCameraEnabled,
@@ -1035,6 +1061,86 @@ export default function App() {
     }
   };
 
+  // Calcul déterministe de l'observateur au sol (distance de sécurité + ETA onde + PSI)
+  const groundObserverResult = useMemo(() => {
+    if (cameraPerspective !== 'ground' || !target) return null;
+    return computeGroundObserverViewState({
+      target,
+      lightBlastM: radii.lightBlast,
+      fireballM: radii.fireball,
+      effectiveYield,
+    });
+  }, [cameraPerspective, target, radii.lightBlast, radii.fireball, effectiveYield]);
+
+  const groundObserverTelemetry = useMemo(() => {
+    if (!groundObserverResult) return null;
+    return {
+      standoffKm: groundObserverResult.standoffKm,
+      shockwaveArrivalSec: groundObserverResult.shockwaveArrivalSec,
+      estimatedPsi: groundObserverResult.estimatedPsi,
+      observerLng: groundObserverResult.observerLng,
+      observerLat: groundObserverResult.observerLat,
+    };
+  }, [groundObserverResult]);
+
+  const handleChangeCameraPerspective = (nextPerspective: CameraPerspective) => {
+    setMissileCameraEnabled(false);
+    setCameraPerspective(nextPerspective);
+
+    if (nextPerspective === 'orbit') {
+      const orb = computeOrbitalCameraViewState({
+        target,
+        origin,
+        lightBlastM: radii.lightBlast,
+      });
+      setViewState({
+        ...orb,
+        transitionDuration: 750,
+      } as any);
+      return;
+    }
+
+    if (nextPerspective === 'ground' && target) {
+      const ground = computeGroundObserverViewState({
+        target,
+        lightBlastM: radii.lightBlast,
+        fireballM: radii.fireball,
+        effectiveYield,
+      });
+      setViewState({
+        ...ground.viewState,
+        transitionDuration: 850,
+      } as any);
+      return;
+    }
+
+    // Retour en Vue Tactique oblique centrée sur la cible
+    const blastKm = Math.max(1, radii.lightBlast / 1000);
+    const tacticalZoom = blastKm > 500 ? 4.5 : blastKm > 120 ? 6.8 : blastKm > 30 ? 8.6 : 10.2;
+    setViewState((prev: any) => ({
+      longitude: target ? target.lng : (prev?.longitude ?? 2.3522),
+      latitude: target ? target.lat : (prev?.latitude ?? 48.8566),
+      zoom: tacticalZoom,
+      pitch: 45,
+      bearing: 0,
+      transitionDuration: 750,
+    }));
+  };
+
+  const handleRecenterGroundObserver = () => {
+    if (!target) return;
+    const ground = computeGroundObserverViewState({
+      target,
+      lightBlastM: radii.lightBlast,
+      fireballM: radii.fireball,
+      effectiveYield,
+    });
+    setViewState({
+      ...ground.viewState,
+      transitionDuration: 650,
+    } as any);
+  };
+
   if (currentTab === 'landing') {
     return <LandingPage onLaunchSimulator={() => {
       soundEngine.playUiClick();
@@ -1125,6 +1231,9 @@ export default function App() {
           missileCameraEnabled={missileCameraEnabled}
           onToggleMissileCamera={() => {
             const next = !missileCameraEnabled;
+            if (next && cameraPerspective === 'orbit') {
+              setCameraPerspective('tactical');
+            }
             setMissileCameraEnabled(next);
             if (next && simulationMode === 'ballistic' && origin && target && !isBallisticRunning) {
               const previewCam = computeMissileCameraViewState({
@@ -1141,6 +1250,10 @@ export default function App() {
             }
           }}
           onDisableMissileCamera={() => setMissileCameraEnabled(false)}
+          cameraPerspective={cameraPerspective}
+          onChangeCameraPerspective={handleChangeCameraPerspective}
+          groundObserverTelemetry={groundObserverTelemetry}
+          onRecenterGroundObserver={handleRecenterGroundObserver}
           onReturnToPortal={() => setCurrentTab('landing')}
           onMapClick={(lng, lat) => {
             cancelFlight();

@@ -79,6 +79,7 @@ export interface BlastRadii {
 }
 
 export type CameraViewAngle = 'map2d' | 'view3d' | 'street' | 'drone' | 'space';
+export type CameraPerspective = 'tactical' | 'ground' | 'orbit';
 
 export interface SimulationTimelineStep {
     id: string;

@@ -10,10 +10,22 @@ if (typeof window !== 'undefined' && typeof maplibregl.setWorkerUrl === 'functio
 }
 
 import DeckGL from '@deck.gl/react';
-import { ScatterplotLayer, PolygonLayer, PointCloudLayer, PathLayer } from 'deck.gl';
-import { Sun, Moon, Globe, Sliders, Check, RotateCcw, Key, X, AlertCircle, LayoutDashboard, Volume2, VolumeX, Rocket } from 'lucide-react';
+import {
+  ScatterplotLayer,
+  PolygonLayer,
+  SolidPolygonLayer,
+  PointCloudLayer,
+  PathLayer,
+  SimpleMeshLayer,
+  LightingEffect,
+  AmbientLight,
+  DirectionalLight,
+  MapView as DeckMapView,
+  _GlobeView,
+} from 'deck.gl';
+import { Sun, Moon, Globe, Sliders, Check, RotateCcw, Key, X, AlertCircle, LayoutDashboard, Volume2, VolumeX, Rocket, Crosshair, Eye, Orbit } from 'lucide-react';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { BlastRadii, EnvironmentParams, PastStrike, StrikeBallisticStatus } from '../types';
+import { BlastRadii, CameraPerspective, EnvironmentParams, PastStrike, StrikeBallisticStatus } from '../types';
 import {
   TsunamiMetrics,
   resolveVectorFlightProfile,
@@ -31,6 +43,7 @@ import {
   interpolateGeodesicPoint,
   generateToroidalMushroomPoints,
   generateWilsonCloudData,
+  generate3DTsunamiWaveData,
 } from '../lib/visualEffects3d';
 import { WORLD_LANDMASS_POLYGONS, isCoordinateOnLand } from '../data/worldPopulation';
 import { soundEngine } from '../lib/soundEngine';
@@ -107,6 +120,16 @@ interface MapViewProps {
   missileCameraEnabled?: boolean;
   onToggleMissileCamera?: () => void;
   onDisableMissileCamera?: () => void;
+  cameraPerspective?: CameraPerspective;
+  onChangeCameraPerspective?: (perspective: CameraPerspective) => void;
+  groundObserverTelemetry?: {
+    standoffKm: number;
+    shockwaveArrivalSec: number;
+    estimatedPsi: number;
+    observerLng: number;
+    observerLat: number;
+  } | null;
+  onRecenterGroundObserver?: () => void;
 }
 
 // Helper pour obtenir uniquement la frontière d'un cercle géodésique pour les PathLayers (sans segment de fermeture polaire)
@@ -367,7 +390,39 @@ export function transformMapboxUrl(url: string, resourceType: string, token: str
   return { url };
 }
 
-export function MapView({ pastStrikes, target, origin, radii, environmentParams, effectiveYield, onMapClick, viewState, setViewState, simulationMode, flightProgress, launchParams, targetDetails, detonationTimeMs, isDetonationAnimating, isDetonationPaused, multiStrikeMode, tsunamiMetrics, onReturnToPortal, soundEnabled, onToggleSound, strikeBallisticStates, missileCameraEnabled = false, onToggleMissileCamera, onDisableMissileCamera }: MapViewProps) {
+export function MapView({
+  pastStrikes,
+  target,
+  origin,
+  radii,
+  environmentParams,
+  effectiveYield,
+  onMapClick,
+  viewState,
+  setViewState,
+  simulationMode,
+  flightProgress,
+  launchParams,
+  targetDetails,
+  detonationTimeMs,
+  isDetonationAnimating,
+  isDetonationPaused,
+  multiStrikeMode,
+  tsunamiMetrics,
+  onReturnToPortal,
+  soundEnabled,
+  onToggleSound,
+  strikeBallisticStates,
+  missileCameraEnabled = false,
+  onToggleMissileCamera,
+  onDisableMissileCamera,
+  cameraPerspective = 'tactical',
+  onChangeCameraPerspective,
+  groundObserverTelemetry,
+  onRecenterGroundObserver,
+}: MapViewProps) {
+  const isOrbitView = cameraPerspective === 'orbit';
+  const isGroundView = cameraPerspective === 'ground';
   
   // Mode de rendu visuel de la carte (Nuit, Jour, Satellite)
   const [mapMode, setMapMode] = useState<MapMode>(() => {
@@ -632,9 +687,8 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
   const layers = useMemo(() => {
     const activeLayers: any[] = [];
 
-    // Fond cartographique vectoriel hors ligne (océan + masses continentales + graticule)
-    // Visible uniquement hors connexion ou en cas d'échec de chargement des tuiles réseau
-    if (isOffline || hasTileError) {
+    // Fond cartographique vectoriel : actif en vue Orbite 3D (_GlobeView) ou hors-ligne / erreur tuiles
+    if (isOrbitView || isOffline || hasTileError) {
       const graticulePaths: Array<{ path: [number, number][] }> = [];
       for (let lat = -60; lat <= 60; lat += 30) {
         const line: [number, number][] = [];
@@ -645,8 +699,8 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         graticulePaths.push({ path: [[lon, -82], [lon, 82]] });
       }
 
-      // Grille tactique locale adaptative lorsque la carte est zoomée hors ligne
-      if (viewState.zoom >= 3.5) {
+      // Grille tactique locale adaptative lorsque la carte est zoomée hors ligne (hors vue orbitale)
+      if (!isOrbitView && viewState.zoom >= 3.5) {
         const step = viewState.zoom >= 9 ? 0.25 : viewState.zoom >= 6 ? 1 : 5;
         const span = viewState.zoom >= 9 ? 2.5 : viewState.zoom >= 6 ? 10 : 35;
         const minLat = Math.max(-82, Math.floor((viewState.latitude - span) / step) * step);
@@ -661,37 +715,62 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         }
       }
 
+      const oceanColor: [number, number, number, number] = isOrbitView
+        ? [8, 22, 46, 255]
+        : mapMode === 'day'
+          ? [203, 224, 240, 235]
+          : [9, 17, 30, 245];
+      const landFillColor: [number, number, number, number] = isOrbitView
+        ? [28, 49, 76, 255]
+        : mapMode === 'day'
+          ? [229, 231, 235, 250]
+          : [33, 46, 66, 245];
+      const landLineColor: [number, number, number, number] = isOrbitView
+        ? [96, 165, 250, 200]
+        : mapMode === 'day'
+          ? [100, 116, 139, 200]
+          : [94, 118, 148, 225];
+
       activeLayers.push(
-        new PolygonLayer({
-          id: 'offline-world-ocean-backdrop',
+        new SolidPolygonLayer({
+          id: 'world-ocean-sphere-backdrop',
           data: [{ contour: [[-180, -85.05], [180, -85.05], [180, 85.05], [-180, 85.05], [-180, -85.05]] }],
           getPolygon: (d: any) => d.contour,
-          getFillColor: mapMode === 'day' ? [203, 224, 240, 235] : [9, 17, 30, 245],
-          stroked: false,
+          getFillColor: oceanColor,
           pickable: false,
-          parameters: { depthTest: false },
+          parameters: isOrbitView
+            ? { depthTest: true, cullMode: 'none' }
+            : { depthTest: false },
         }),
         new PolygonLayer({
-          id: 'offline-world-landmasses',
+          id: 'world-landmasses-vector',
           data: WORLD_LANDMASS_POLYGONS,
           getPolygon: (d: any) => d.ring,
-          getFillColor: mapMode === 'day' ? [229, 231, 235, 250] : [33, 46, 66, 245],
+          getFillColor: landFillColor,
           stroked: true,
-          getLineColor: mapMode === 'day' ? [100, 116, 139, 200] : [94, 118, 148, 225],
-          getLineWidth: 1.5,
+          getLineColor: landLineColor,
+          getLineWidth: isOrbitView ? 1.2 : 1.5,
           lineWidthUnits: 'pixels',
           pickable: false,
-          parameters: { depthTest: false },
+          parameters: isOrbitView
+            ? { depthTest: true, cullMode: 'none', depthCompare: 'less-equal' as any }
+            : { depthTest: false },
         }),
         new PathLayer({
-          id: 'offline-world-graticule',
+          id: 'world-graticule-vector',
           data: graticulePaths,
           getPath: (d: any) => d.path,
-          getColor: mapMode === 'day' ? [148, 163, 184, 75] : [71, 85, 105, 95],
+          getColor: isOrbitView
+            ? [56, 189, 248, 55]
+            : mapMode === 'day'
+              ? [148, 163, 184, 75]
+              : [71, 85, 105, 95],
           getWidth: 1,
           widthUnits: 'pixels',
           pickable: false,
-          parameters: { depthTest: false },
+          parameters: isOrbitView
+            ? { depthTest: true, depthCompare: 'less-equal' as any }
+            : { depthTest: false },
         })
       );
     }
@@ -1404,10 +1483,10 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
               environmentParams.manningN ?? 0.050
             );
 
-        if (environmentParams?.maritimeImpact && strikeTsunami?.isEligible && strikeDetonationMs >= 2000) {
+        if (environmentParams?.maritimeImpact && strikeTsunami?.isEligible && strikeDetonationMs >= 1800) {
           const oceanDepthM = environmentParams.oceanDepthM ?? 2000;
           const coastalFloodingRadius = strikeTsunami.recommendedFloodRadiusM;
-          const maritimeProgress = Math.max(0, Math.min(1, (strikeDetonationMs - 2000) / 4000));
+          const maritimeProgress = Math.max(0, Math.min(1, (strikeDetonationMs - 1800) / 4200));
           const currentFloodRadius = coastalFloodingRadius * maritimeProgress;
 
           if (currentFloodRadius > 0) {
@@ -1423,62 +1502,73 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
                 id: `maritime-flood-area-${strId}`,
                 data: [{ contour: floodPoly }],
                 getPolygon: (d: any) => d.contour,
-                getFillColor: [56, 189, 248, Math.floor(35 * maritimeProgress)],
+                getFillColor: [56, 189, 248, Math.floor(32 * maritimeProgress)],
                 stroked: false,
                 pickable: false,
-                parameters: { depthTest: false }
+                parameters: { depthTest: isOrbitView }
               }),
               new PathLayer({
                 id: `maritime-flood-border-${strId}`,
                 data: dashSegments,
                 getPath: (d: any) => d.path,
-                getColor: [14, 165, 233, Math.floor(220 * maritimeProgress)], 
+                getColor: [14, 165, 233, Math.floor(210 * maritimeProgress)],
                 getWidth: 2.5,
                 widthUnits: 'pixels',
                 pickable: false,
-                parameters: { depthTest: false }
+                parameters: { depthTest: isOrbitView }
               })
             );
           }
 
-          // Anneaux de vagues concentriques animés (Seulement si sur l'eau)
-          if (strikeIsWater) {
-             const numRings = 4;
-             for (let i = 0; i < numRings; i++) {
-                const timeActiveMs = Math.max(0, (strikeDetonationMs - 2000) - i * 600);
-                if (timeActiveMs <= 0) continue;
-                
-                const waveSpeedDeep = Math.sqrt(oceanDepthM * 9.8);
-                const simulatedSeconds = (timeActiveMs / 1000) * 15; 
-                let radM = waveSpeedDeep * simulatedSeconds;
-                
-                const shoreDistM = strikeShoreKm * 1000;
-                if (radM > shoreDistM * 0.6) {
-                    const excess = radM - shoreDistM * 0.6;
-                    radM = shoreDistM * 0.6 + excess * 0.25; 
-                }
+          // Vagues tsunami en vrai rendu 3D (maillage de surface continu avec normales, éclairage spéculaire & écume)
+          const tsunami3D = generate3DTsunamiWaveData({
+            target: targetCoord,
+            isWater: strikeIsWater,
+            isEligible: Boolean(strikeTsunami?.isEligible),
+            shoreDistanceKm: strikeShoreKm,
+            oceanDepthM,
+            initialWaveHeightM: strikeTsunami.initialWaveHeightM,
+            shoreWaveHeightM: strikeTsunami.shoreWaveHeightM,
+            runUpHeightM: strikeTsunami.runUpHeightM,
+            floodRadiusM: strikeTsunami.recommendedFloodRadiusM,
+            detonationTimeMs: strikeDetonationMs,
+          });
 
-                const opacityProgress = Math.min(1, timeActiveMs / 6000);
-                const ringOpacity = Math.max(0, Math.floor(255 * (1 - opacityProgress) * (1 - i/numRings)));
-                
-                if (ringOpacity > 0 && radM > 0) {
-                     const ringPath = getGeodesicRingPath(targetCoord.lng, targetCoord.lat, radM, 64);
-                     if (ringPath.length > 2) {
-                       activeLayers.push(
-                          new PathLayer({
-                            id: `tsunami-ring-${strId}-${i}`,
-                            data: [{ path: ringPath }],
-                            getPath: (d: any) => d.path,
-                            getColor: [125, 211, 252, ringOpacity],
-                            getWidth: Math.max(1, 3 - i),
-                            widthUnits: 'pixels',
-                            pickable: false,
-                            parameters: { depthTest: false }
-                          })
-                       );
-                     }
-                }
-             }
+          if (tsunami3D.active && tsunami3D.mesh) {
+            const meshAlpha = Math.max(85, Math.min(240, Math.round(tsunami3D.opacity * 255)));
+            activeLayers.push(
+              new SimpleMeshLayer({
+                id: `tsunami-3d-waves-${strId}`,
+                data: [{ position: [targetCoord.lng, targetCoord.lat, 0] }],
+                mesh: tsunami3D.mesh,
+                getPosition: (d: any) => d.position,
+                getColor: [255, 255, 255, meshAlpha],
+                _instanced: true,
+                material: {
+                  ambient: 0.42,
+                  diffuse: 0.72,
+                  shininess: 76,
+                  specularColor: [230, 248, 255],
+                },
+                pickable: false,
+                parameters: { depthTest: true, cullMode: 'none' },
+              })
+            );
+            if (tsunami3D.foamPoints.length > 0) {
+              activeLayers.push(
+                new PointCloudLayer({
+                  id: `tsunami-3d-foam-${strId}`,
+                  data: tsunami3D.foamPoints,
+                  getPosition: (d: any) => d.position,
+                  getNormal: (d: any) => d.normal,
+                  getColor: (d: any) => d.color,
+                  pointSize: 2.2,
+                  sizeUnits: 'pixels',
+                  pickable: false,
+                  parameters: { depthTest: true }
+                })
+              );
+            }
           }
         }
       }
@@ -1519,12 +1609,43 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
       );
     }
 
+    // Balise de l'observateur au sol et axe de visée en perspective « Vue Sol »
+    if (isGroundView && groundObserverTelemetry && target) {
+      const obsPos: [number, number] = [groundObserverTelemetry.observerLng, groundObserverTelemetry.observerLat];
+      activeLayers.push(
+        new PathLayer({
+          id: 'ground-observer-line-of-sight',
+          data: [{ path: [obsPos, [target.lng, target.lat]] }],
+          getPath: (d: any) => d.path,
+          getColor: [56, 189, 248, 120],
+          getWidth: 2,
+          widthUnits: 'pixels',
+          pickable: false,
+          parameters: { depthTest: false },
+        }),
+        new ScatterplotLayer({
+          id: 'ground-observer-beacon',
+          data: [{ position: obsPos }],
+          getPosition: (d: any) => d.position,
+          getFillColor: [56, 189, 248, 240],
+          getRadius: 7,
+          radiusUnits: 'pixels',
+          stroked: true,
+          getLineColor: [255, 255, 255, 255],
+          lineWidthMinPixels: 2,
+          pickable: false,
+          parameters: { depthTest: false },
+        })
+      );
+    }
+
     return activeLayers;
   }, [
     multiStrikeMode,
     activeStrikes,
     pastStrikes,
     origin,
+    target,
     simulationMode,
     launchParams,
     flightProgress,
@@ -1543,11 +1664,90 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
     strikeBallisticStates,
     isOffline,
     hasTileError,
-    mapMode
+    mapMode,
+    isOrbitView,
+    isGroundView,
+    groundObserverTelemetry,
+    viewState?.zoom,
+    viewState?.latitude,
+    viewState?.longitude
   ]);
 
+  const deckView = useMemo(() => {
+    if (isOrbitView) {
+      return new _GlobeView({ id: 'globe', resolution: 5 });
+    }
+    return new DeckMapView({ id: 'map' });
+  }, [isOrbitView]);
+
+  const deckViewState = useMemo(() => {
+    const baseLng = Number.isFinite(viewState?.longitude) ? viewState.longitude : 2.3522;
+    const baseLat = Number.isFinite(viewState?.latitude) ? viewState.latitude : 48.8566;
+    const rawZoom = Number.isFinite(viewState?.zoom) ? viewState.zoom : 10;
+    const rawPitch = Number.isFinite(viewState?.pitch) ? viewState.pitch : 45;
+    const rawBearing = Number.isFinite(viewState?.bearing) ? viewState.bearing : 0;
+
+    return {
+      longitude: baseLng,
+      latitude: baseLat,
+      zoom: isOrbitView ? Math.max(0.5, Math.min(11.5, rawZoom)) : Math.max(0, Math.min(20, rawZoom)),
+      pitch: isOrbitView ? 0 : Math.max(0, Math.min(85, rawPitch)),
+      bearing: rawBearing,
+      minZoom: isOrbitView ? 0.5 : 0,
+      maxZoom: isOrbitView ? 11.5 : 20,
+      minPitch: 0,
+      maxPitch: 85,
+      ...(viewState?.transitionDuration ? { transitionDuration: viewState.transitionDuration } : {}),
+    };
+  }, [viewState, isOrbitView]);
+
+  const deckEffects = useMemo(() => {
+    const ambientLight = new AmbientLight({
+      color: [255, 255, 255],
+      intensity: mapMode === 'day' ? 1.45 : 1.15,
+    });
+    const directionalLight = new DirectionalLight({
+      color: mapMode === 'day' ? [255, 250, 240] : [186, 224, 255],
+      intensity: mapMode === 'day' ? 2.1 : 1.85,
+      direction: [-0.45, -0.65, -1.0],
+    });
+    return [new LightingEffect({ ambientLight, directionalLight })];
+  }, [mapMode]);
+
   return (
-    <div className="w-full h-full relative cursor-crosshair touch-none" data-testid="map-viewport">
+    <div
+      className={`w-full h-full relative cursor-crosshair touch-none ${
+        isOrbitView
+          ? 'bg-[radial-gradient(ellipse_at_center,_#081834_0%,_#030816_60%,_#000000_100%)]'
+          : 'bg-black'
+      }`}
+      data-testid="map-viewport"
+      data-perspective={cameraPerspective}
+    >
+      {/* Champ d'étoiles subtil en perspective Orbite */}
+      {isOrbitView && (
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 pointer-events-none opacity-65"
+          style={{
+            backgroundImage:
+              'radial-gradient(1px 1px at 14% 22%, rgba(255,255,255,0.85), transparent), radial-gradient(1.5px 1.5px at 38% 12%, rgba(186,230,253,0.75), transparent), radial-gradient(1px 1px at 66% 18%, rgba(255,255,255,0.75), transparent), radial-gradient(1px 1px at 84% 34%, rgba(224,242,254,0.8), transparent), radial-gradient(1.5px 1.5px at 22% 74%, rgba(255,255,255,0.65), transparent), radial-gradient(1px 1px at 78% 78%, rgba(186,230,253,0.7), transparent), radial-gradient(1px 1px at 51% 86%, rgba(255,255,255,0.6), transparent)',
+          }}
+        />
+      )}
+
+      {/* Dégradé atmosphérique d'horizon en perspective Sol */}
+      {isGroundView && (
+        <div
+          aria-hidden="true"
+          className={`absolute inset-x-0 top-0 h-[36%] pointer-events-none z-[5] ${
+            mapMode === 'day'
+              ? 'bg-gradient-to-b from-sky-200/55 via-sky-100/15 to-transparent'
+              : 'bg-gradient-to-b from-slate-950/75 via-sky-950/20 to-transparent'
+          }`}
+        />
+      )}
+
       {/* Shockwave PSI Status Bar */}
       <AnimatePresence>
         {currentPsi > 0 && (
@@ -1555,7 +1755,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
             initial={{ opacity: 0, y: -20, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -20, scale: 0.95 }}
-            className="absolute top-[4.75rem] left-1/2 -translate-x-1/2 z-[90] pointer-events-none"
+            className="absolute top-[7.75rem] md:top-[4.75rem] left-1/2 -translate-x-1/2 z-[90] pointer-events-none"
           >
             <div className="bg-zinc-950/90 backdrop-blur-md border border-zinc-800 rounded-lg px-3.5 py-1.5 flex items-center gap-2.5 shadow-xl whitespace-nowrap">
                <span className="text-zinc-400 text-[11px] font-medium tracking-wide uppercase">Front de l'onde</span>
@@ -1567,14 +1767,10 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
       </AnimatePresence>
 
       <DeckGL
-        viewState={{
-          longitude: Number.isFinite(viewState?.longitude) ? viewState.longitude : 2.3522,
-          latitude: Number.isFinite(viewState?.latitude) ? viewState.latitude : 48.8566,
-          zoom: Number.isFinite(viewState?.zoom) ? viewState.zoom : 10,
-          pitch: Number.isFinite(viewState?.pitch) ? viewState.pitch : 45,
-          bearing: Number.isFinite(viewState?.bearing) ? viewState.bearing : 0,
-          ...(viewState?.transitionDuration ? { transitionDuration: viewState.transitionDuration } : {})
-        }}
+        views={deckView}
+        viewState={deckViewState}
+        effects={deckEffects}
+        style={isOrbitView ? { background: 'transparent' } : undefined}
         onViewStateChange={({ viewState: rawNextVs, interactionState }) => {
           const isUserInteraction = Boolean(
             interactionState?.isDragging ||
@@ -1603,12 +1799,36 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
             Number.isFinite(nextVs.latitude) &&
             Number.isFinite(nextVs.zoom)
           ) {
-            setViewState({
-              longitude: nextVs.longitude,
-              latitude: nextVs.latitude,
-              zoom: nextVs.zoom,
-              pitch: Number.isFinite(nextVs.pitch) ? nextVs.pitch : 45,
-              bearing: Number.isFinite(nextVs.bearing) ? nextVs.bearing : 0
+            const clampedNextZoom = isOrbitView
+              ? Math.max(0.5, Math.min(11.5, nextVs.zoom as number))
+              : Math.max(0, Math.min(20, nextVs.zoom as number));
+            const nextPitch = isOrbitView
+              ? 0
+              : Math.max(0, Math.min(85, Number.isFinite(nextVs.pitch) ? (nextVs.pitch as number) : 45));
+            const nextBearing = Number.isFinite(nextVs.bearing) ? (nextVs.bearing as number) : 0;
+
+            setViewState((prev: any) => {
+              const keepTransition = Boolean(
+                interactionState?.inTransition && !isUserInteraction && prev?.transitionDuration
+              );
+              const unchanged =
+                prev &&
+                Math.abs((prev.longitude ?? 0) - (nextVs.longitude as number)) < 1e-5 &&
+                Math.abs((prev.latitude ?? 0) - (nextVs.latitude as number)) < 1e-5 &&
+                Math.abs((prev.zoom ?? 0) - clampedNextZoom) < 1e-5 &&
+                Math.abs((prev.pitch ?? 0) - nextPitch) < 1e-4 &&
+                Math.abs((prev.bearing ?? 0) - nextBearing) < 1e-4 &&
+                Boolean(prev.transitionDuration) === keepTransition;
+
+              if (unchanged) return prev;
+              return {
+                longitude: nextVs.longitude as number,
+                latitude: nextVs.latitude as number,
+                zoom: clampedNextZoom,
+                pitch: nextPitch,
+                bearing: nextBearing,
+                ...(keepTransition ? { transitionDuration: prev.transitionDuration } : {}),
+              };
             });
           }
         }}
@@ -1628,40 +1848,43 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         }}
         getCursor={() => 'crosshair'}
       >
-        <Map
-          mapLib={maplibregl as any}
-          mapStyle={activeMapStyle}
-          transformRequest={transformRequestCallback}
-          reuseMaps
-          attributionControl={true}
-          onLoad={() => {
-            setMapErrorMsg(null);
-            setHasTileError(false);
-          }}
-          onError={(e) => {
-            const msg = (e as any)?.error?.message || '';
-            console.warn('[MapLibre Info] Notification du moteur cartographique:', e);
-            if (mapProvider === 'mapbox') {
-              // Bascule automatiquement sur OpenFreeMap/ESRI si le style Mapbox est incompatible ou refusé
-              setMapProvider('free');
-              localStorage.setItem('nukemap_map_provider', 'free');
-              setMapErrorMsg("Style Mapbox indisponible ou incompatible — bascule automatique sur fonds OpenFreeMap/ESRI.");
-              return;
-            }
-            if (msg && !msg.toLowerCase().includes('abort')) {
-              setHasTileError(true);
-              if (typeof navigator !== 'undefined' && !navigator.onLine) {
-                setMapErrorMsg(null);
-              } else {
-                setMapErrorMsg("Tuiles réseau indisponibles — bascule sur fond vectoriel continental hors-ligne.");
+        {!isOrbitView && (
+          <Map
+            mapLib={maplibregl as any}
+            mapStyle={activeMapStyle}
+            transformRequest={transformRequestCallback}
+            maxPitch={85}
+            reuseMaps
+            attributionControl={true}
+            onLoad={() => {
+              setMapErrorMsg(null);
+              setHasTileError(false);
+            }}
+            onError={(e) => {
+              const msg = (e as any)?.error?.message || '';
+              console.warn('[MapLibre Info] Notification du moteur cartographique:', e);
+              if (mapProvider === 'mapbox') {
+                // Bascule automatiquement sur OpenFreeMap/ESRI si le style Mapbox est incompatible ou refusé
+                setMapProvider('free');
+                localStorage.setItem('nukemap_map_provider', 'free');
+                setMapErrorMsg("Style Mapbox indisponible ou incompatible — bascule automatique sur fonds OpenFreeMap/ESRI.");
+                return;
               }
-            }
-          }}
-        />
+              if (msg && !msg.toLowerCase().includes('abort')) {
+                setHasTileError(true);
+                if (typeof navigator !== 'undefined' && !navigator.onLine) {
+                  setMapErrorMsg(null);
+                } else {
+                  setMapErrorMsg("Tuiles réseau indisponibles — bascule sur fond vectoriel continental hors-ligne.");
+                }
+              }
+            }}
+          />
+        )}
       </DeckGL>
 
       {/* Unified Top Bar: zero overlap across mobile & desktop */}
-      <div className="absolute top-3 inset-x-3 md:top-4 md:left-4 md:right-4 flex items-center justify-between gap-2 pointer-events-none z-[100]">
+      <div className="absolute top-3 inset-x-3 md:top-4 md:left-4 md:right-4 flex flex-wrap items-center justify-between gap-2 pointer-events-none z-[100]">
         <div className="pointer-events-auto flex items-center gap-2 min-w-0">
           {onReturnToPortal && (
             <button
@@ -1679,6 +1902,72 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
             </button>
           )}
         </div>
+
+        {/* Sélecteur de perspective 3D (Tactique / Sol / Orbite) */}
+        {onChangeCameraPerspective && (
+          <div
+            role="group"
+            aria-label="Sélecteur de perspective 3D"
+            className="pointer-events-auto flex items-center bg-zinc-950/95 border border-zinc-800 rounded-lg shadow-xl overflow-hidden shrink-0 backdrop-blur-md"
+          >
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onChangeCameraPerspective('tactical');
+              }}
+              aria-label="Vue Tactique"
+              aria-pressed={cameraPerspective === 'tactical'}
+              className={`min-h-11 px-2.5 sm:px-3 flex items-center justify-center gap-1.5 transition-colors duration-200 cursor-pointer font-mono text-[10px] uppercase tracking-wider font-bold ${
+                cameraPerspective === 'tactical'
+                  ? 'bg-zinc-800 text-zinc-100'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
+              }`}
+              title="Vue Tactique oblique"
+            >
+              <Crosshair className={`w-3.5 h-3.5 shrink-0 ${cameraPerspective === 'tactical' ? 'text-red-400' : ''}`} />
+              <span>Tactique</span>
+            </button>
+            <div className="w-[1px] h-5 bg-zinc-800" />
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onChangeCameraPerspective('ground');
+              }}
+              aria-label="Vue Sol"
+              aria-pressed={cameraPerspective === 'ground'}
+              className={`min-h-11 px-2.5 sm:px-3 flex items-center justify-center gap-1.5 transition-colors duration-200 cursor-pointer font-mono text-[10px] uppercase tracking-wider font-bold ${
+                cameraPerspective === 'ground'
+                  ? 'bg-sky-950/80 text-sky-300'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
+              }`}
+              title="Perspective au sol face au point zéro"
+            >
+              <Eye className={`w-3.5 h-3.5 shrink-0 ${cameraPerspective === 'ground' ? 'text-sky-400' : ''}`} />
+              <span>Sol</span>
+            </button>
+            <div className="w-[1px] h-5 bg-zinc-800" />
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onChangeCameraPerspective('orbit');
+              }}
+              aria-label="Vue Orbite"
+              aria-pressed={cameraPerspective === 'orbit'}
+              className={`min-h-11 px-2.5 sm:px-3 flex items-center justify-center gap-1.5 transition-colors duration-200 cursor-pointer font-mono text-[10px] uppercase tracking-wider font-bold ${
+                cameraPerspective === 'orbit'
+                  ? 'bg-indigo-950/80 text-indigo-300'
+                  : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
+              }`}
+              title="Globe orbital 3D depuis l'espace"
+            >
+              <Orbit className={`w-3.5 h-3.5 shrink-0 ${cameraPerspective === 'orbit' ? 'text-indigo-400' : ''}`} />
+              <span>Orbite</span>
+            </button>
+          </div>
+        )}
 
         <div className="pointer-events-auto flex items-center bg-zinc-950/95 border border-zinc-800 rounded-lg shadow-xl overflow-hidden shrink-0 backdrop-blur-md">
           <button
@@ -1776,11 +2065,64 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         </div>
       </div>
 
+      {/* Puce télémétrique compacte en Vue Sol ou Vue Orbite */}
+      {(isGroundView && groundObserverTelemetry) && (
+        <div
+          data-testid="ground-observer-hud"
+          className="absolute top-[7.75rem] md:top-[4.75rem] right-3 md:right-4 z-[90] bg-zinc-950/90 backdrop-blur-md border border-sky-800/60 rounded-lg px-3 py-2 shadow-xl flex items-center gap-3 text-[11px] font-mono pointer-events-auto"
+        >
+          <div className="flex flex-col leading-tight">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-sky-400">Observateur Sol</span>
+            <span className="text-zinc-200 tabular-nums">
+              {groundObserverTelemetry.standoffKm} km · Onde +{groundObserverTelemetry.shockwaveArrivalSec}s · {groundObserverTelemetry.estimatedPsi} psi
+            </span>
+          </div>
+          {onRecenterGroundObserver && (
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onRecenterGroundObserver();
+              }}
+              aria-label="Recentrer la vue au sol vers le point zéro"
+              className="min-h-8 px-2.5 rounded bg-sky-950/70 hover:bg-sky-900/70 border border-sky-700/60 text-sky-200 text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-colors"
+            >
+              Recentrer
+            </button>
+          )}
+        </div>
+      )}
+
+      {isOrbitView && (
+        <div
+          data-testid="orbit-view-hud"
+          className="absolute top-[7.75rem] md:top-[4.75rem] right-3 md:right-4 z-[90] bg-zinc-950/90 backdrop-blur-md border border-indigo-800/60 rounded-lg px-3 py-2 shadow-xl flex items-center gap-3 text-[11px] font-mono pointer-events-auto"
+        >
+          <div className="flex flex-col leading-tight">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-400">Orbite Basse · Globe 3D</span>
+            <span className="text-zinc-300 text-[10px]">Rotation sphérique libre</span>
+          </div>
+          {onChangeCameraPerspective && (
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playUiClick();
+                onChangeCameraPerspective('orbit');
+              }}
+              aria-label="Recentrer le globe orbital"
+              className="min-h-8 px-2.5 rounded bg-indigo-950/70 hover:bg-indigo-900/70 border border-indigo-700/60 text-indigo-200 text-[10px] font-bold uppercase tracking-wider cursor-pointer transition-colors"
+            >
+              Recentrer
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Mode hors-ligne ou alerte tuiles discrète (non bloquante) */}
-      {(isOffline || mapErrorMsg) && (
+      {(isOffline || (!isOrbitView && mapErrorMsg)) && (
         <div
           role={isOffline ? 'status' : 'alert'}
-          className={`absolute top-[4.75rem] left-3 right-3 md:left-4 md:right-auto md:max-w-md z-[95] px-3 py-2 rounded-lg text-xs flex items-center justify-between gap-2 shadow-xl backdrop-blur-md border ${
+          className={`absolute top-[11.25rem] md:top-[4.75rem] left-3 right-3 md:left-4 md:right-auto md:max-w-md z-[95] px-3 py-2 rounded-lg text-xs flex items-center justify-between gap-2 shadow-xl backdrop-blur-md border ${
             isOffline
               ? 'bg-zinc-900/90 border-sky-700/60 text-sky-200'
               : 'bg-amber-950/90 border-amber-800/70 text-amber-200'
