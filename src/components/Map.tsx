@@ -11,7 +11,7 @@ if (typeof window !== 'undefined' && typeof maplibregl.setWorkerUrl === 'functio
 
 import DeckGL from '@deck.gl/react';
 import { ScatterplotLayer, PolygonLayer, PointCloudLayer, PathLayer } from 'deck.gl';
-import { Sun, Moon, Globe, Sliders, Check, RotateCcw, Key, X, AlertCircle, LayoutDashboard, Volume2, VolumeX } from 'lucide-react';
+import { Sun, Moon, Globe, Sliders, Check, RotateCcw, Key, X, AlertCircle, LayoutDashboard, Volume2, VolumeX, Rocket } from 'lucide-react';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { BlastRadii, EnvironmentParams, PastStrike, StrikeBallisticStatus } from '../types';
 import {
@@ -27,6 +27,11 @@ import {
   estimateClosestSeaDistanceKm,
   haversineKm,
 } from '../lib/nuclearMath';
+import {
+  interpolateGeodesicPoint,
+  generateToroidalMushroomPoints,
+  generateWilsonCloudData,
+} from '../lib/visualEffects3d';
 import { WORLD_LANDMASS_POLYGONS, isCoordinateOnLand } from '../data/worldPopulation';
 import { soundEngine } from '../lib/soundEngine';
 
@@ -99,6 +104,9 @@ interface MapViewProps {
   soundEnabled: boolean;
   onToggleSound: () => void;
   strikeBallisticStates?: Record<string, StrikeBallisticStatus>;
+  missileCameraEnabled?: boolean;
+  onToggleMissileCamera?: () => void;
+  onDisableMissileCamera?: () => void;
 }
 
 // Helper pour obtenir uniquement la frontière d'un cercle géodésique pour les PathLayers (sans segment de fermeture polaire)
@@ -229,92 +237,7 @@ function calculateShockwaveBands(
   return bands;
 }
 
-function calculateMushroomCloud(
-  targetAddress: { lng: number; lat: number },
-  environmentParams: EnvironmentParams,
-  effectiveYield: number,
-  detonationTimeMs: number
-) {
-  if (!environmentParams.showMushroomCloud || effectiveYield <= 0 || detonationTimeMs < 2000) return [];
-
-  const numPoints = 2500; 
-  const points = [];
-  
-  const rawHeight = 3000 * Math.pow(effectiveYield, 0.25);
-  const tropopauseM = (environmentParams.tropopauseAltitudeKm || 11.5) * 1000;
-  
-  let height = Math.min(140_000, rawHeight);
-  let capRadius = Math.min(220_000, 600 * Math.pow(effectiveYield, 0.3));
-  
-  if (effectiveYield < 1000 && rawHeight > tropopauseM * 0.8) {
-    height = Math.min(height, tropopauseM);
-    if (height === tropopauseM) {
-      capRadius = Math.min(220_000, capRadius * 1.4);
-    }
-  }
-  
-  const stalkRadius = Math.min(55_000, 150 * Math.pow(effectiveYield, 0.3));
-  const stalkHeight = height * 0.7;
-
-  const mushroomProgress = Math.min(1, (detonationTimeMs - 2000) / 6000);
-  const swayDistance = Math.sin((detonationTimeMs / 1000) * 2.0) * (stalkRadius * 0.35) * mushroomProgress;
-
-  for (let i = 0; i < numPoints; i++) {
-    const r1 = (Math.sin(i * 12.9898 + 78.233) * 43758.5453) % 1;
-    const r1p = r1 < 0 ? r1 + 1 : r1;
-    const r2 = (Math.sin(i * 4.1414 + 11.854) * 23145.1235) % 1;
-    const r2p = r2 < 0 ? r2 + 1 : r2;
-    const r3 = (Math.sin(i * 9.5123 + 47.902) * 63984.7121) % 1;
-    const r3p = r3 < 0 ? r3 + 1 : r3;
-    const r4 = (Math.sin(i * 3.7381 + 99.284) * 81231.5432) % 1;
-    const r4p = r4 < 0 ? r4 + 1 : r4;
-
-    const part = r1p;
-    let z = 0, r = 0, theta = r2p * Math.PI * 2;
-    let color: [number, number, number, number] = [200, 200, 200, 255];
-
-    if (part > 0.4) {
-      const zOffset = (r3p * 2 - 1) * (height * 0.15);
-      z = (stalkHeight * mushroomProgress) + (height * 0.15) + (zOffset * mushroomProgress);
-      z = Math.max(z, stalkHeight * mushroomProgress);
-      r = capRadius * Math.pow(mushroomProgress, 1.4) * Math.sqrt(r4p);
-      const isBottom = z < (stalkHeight * mushroomProgress) + (height * 0.15);
-      if (isBottom) {
-        color = [255, Math.floor(100 + r3p * 100), 50, Math.floor((120 + r4p * 70) * mushroomProgress)];
-      } else {
-        const shade = 140 + Math.floor(r3p * 110);
-        color = [shade, shade, shade, Math.floor((140 + r4p * 80) * mushroomProgress)];
-      }
-    } else if (part > 0.05) {
-      z = r3p * (stalkHeight * mushroomProgress);
-      const zNorm = z / (stalkHeight * Math.max(0.01, mushroomProgress));
-      const currentRadius = stalkRadius * Math.min(1, mushroomProgress * 1.2) * (1 - 0.3 * Math.sin(zNorm * Math.PI));
-      r = currentRadius * Math.sqrt(r4p);
-      const shade = 95 + Math.floor(r2p * 85);
-      color = [shade, shade, shade, Math.floor((120 + r1p * 60) * mushroomProgress)];
-    } else {
-      z = r3p * (height * 0.08) * mushroomProgress;
-      r = (stalkRadius * 1.5) + r4p * (capRadius * 1.1) * Math.pow(mushroomProgress, 0.8);
-      const shade = 110 + Math.floor(r2p * 70);
-      color = [shade, shade, shade, Math.floor((80 + r1p * 60) * mushroomProgress)];
-    }
-
-    const dx = r * Math.cos(theta) + swayDistance * (z / Math.max(1, height));
-    const dy = r * Math.sin(theta);
-    const offsetDistKm = Math.hypot(dx, dy) / 1000;
-    const bearingDeg = (Math.atan2(dx, dy) * 180) / Math.PI;
-    const pos = offsetDistKm > 0
-      ? getGeodesicDestination(targetAddress.lng, targetAddress.lat, offsetDistKm, bearingDeg)
-      : [targetAddress.lng, targetAddress.lat];
-
-    points.push({
-      position: [pos[0], Math.max(-85, Math.min(85, pos[1])), z],
-      color,
-      normal: [0, 0, 1]
-    });
-  }
-  return points;
-}
+// Fin des fonctions géométriques locales — le champignon convectif toroïdal et le nuage de Wilson sont calculés dans ../lib/visualEffects3d.ts
 
 const falloutDriftParticles = (() => {
   const particles = [];
@@ -444,7 +367,7 @@ export function transformMapboxUrl(url: string, resourceType: string, token: str
   return { url };
 }
 
-export function MapView({ pastStrikes, target, origin, radii, environmentParams, effectiveYield, onMapClick, viewState, setViewState, simulationMode, flightProgress, launchParams, targetDetails, detonationTimeMs, isDetonationAnimating, isDetonationPaused, multiStrikeMode, tsunamiMetrics, onReturnToPortal, soundEnabled, onToggleSound, strikeBallisticStates }: MapViewProps) {
+export function MapView({ pastStrikes, target, origin, radii, environmentParams, effectiveYield, onMapClick, viewState, setViewState, simulationMode, flightProgress, launchParams, targetDetails, detonationTimeMs, isDetonationAnimating, isDetonationPaused, multiStrikeMode, tsunamiMetrics, onReturnToPortal, soundEnabled, onToggleSound, strikeBallisticStates, missileCameraEnabled = false, onToggleMissileCamera, onDisableMissileCamera }: MapViewProps) {
   
   // Mode de rendu visuel de la carte (Nuit, Jour, Satellite)
   const [mapMode, setMapMode] = useState<MapMode>(() => {
@@ -873,23 +796,20 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           surfaceDistKm: distKm,
         });
 
-        // Predicted trajectory dotted arc
-        const arcSteps = 60;
+        // Trajectoire prédite le long du grand cercle sphérique (sans dérive Mercator)
+        const arcSteps = 64;
         const dashSegments = [];
         for (let i = 0; i < arcSteps; i += 2) {
           const t1 = i / arcSteps;
           const t2 = (i + 1) / arcSteps;
-          const pt1 = [
-            origin.lng + (targetCoord.lng - origin.lng) * t1,
-            origin.lat + (targetCoord.lat - origin.lat) * t1,
-            4 * maxAlt * t1 * (1 - t1)
-          ];
-          const pt2 = [
-            origin.lng + (targetCoord.lng - origin.lng) * t2,
-            origin.lat + (targetCoord.lat - origin.lat) * t2,
-            4 * maxAlt * t2 * (1 - t2)
-          ];
-          dashSegments.push({ path: [pt1, pt2] });
+          const [lng1, lat1] = interpolateGeodesicPoint(origin.lng, origin.lat, targetCoord.lng, targetCoord.lat, t1);
+          const [lng2, lat2] = interpolateGeodesicPoint(origin.lng, origin.lat, targetCoord.lng, targetCoord.lat, t2);
+          dashSegments.push({
+            path: [
+              [lng1, lat1, 4 * maxAlt * t1 * (1 - t1)],
+              [lng2, lat2, 4 * maxAlt * t2 * (1 - t2)],
+            ],
+          });
         }
 
         activeLayers.push(
@@ -913,8 +833,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
 
         // Flight trail and vehicle visual if flying
         if (p > 0 && p < 1) {
-          const currentLng = origin.lng + (targetCoord.lng - origin.lng) * p;
-          const currentLat = origin.lat + (targetCoord.lat - origin.lat) * p;
+          const [currentLng, currentLat] = interpolateGeodesicPoint(origin.lng, origin.lat, targetCoord.lng, targetCoord.lat, p);
           const currentAlt = 4 * maxAlt * p * (1 - p);
 
           let activeColor: [number, number, number] = [239, 68, 68];
@@ -926,12 +845,11 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           }
 
           const trailArcPoints = [];
-          const trailArcSteps = Math.ceil(p * 45);
+          const trailArcSteps = Math.ceil(p * 48);
           if (trailArcSteps >= 2) {
             for (let i = 0; i <= trailArcSteps; i++) {
               const t = (i / trailArcSteps) * p;
-              const tLng = origin.lng + (targetCoord.lng - origin.lng) * t;
-              const tLat = origin.lat + (targetCoord.lat - origin.lat) * t;
+              const [tLng, tLat] = interpolateGeodesicPoint(origin.lng, origin.lat, targetCoord.lng, targetCoord.lat, t);
               const tAlt = 4 * maxAlt * t * (1 - t);
               trailArcPoints.push([tLng, tLat, tAlt]);
             }
@@ -955,39 +873,48 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           }
 
           const particleList = [];
+          // Halo externe d'onde d'étrave en phase de rentrée ou boost
+          if (p < 0.18 || p >= 0.68) {
+            particleList.push({
+              position: [currentLng, currentLat, currentAlt],
+              color: p >= 0.68
+                ? (strikeCoupling.plasmaIntensity > 0.35 ? [56, 189, 248, 95] : [251, 146, 60, 90])
+                : [239, 68, 68, 85],
+              size: 13 + strikeCoupling.plasmaIntensity * 8
+            });
+          }
+
           particleList.push({
             position: [currentLng, currentLat, currentAlt],
             color: [...activeColor, 255],
             size: 6 + strikeCoupling.plasmaIntensity * 5
           });
 
-          // Plumes boost & sillage plasma de rentrée hypersonique
+          // Plumes boost & sillage plasma de rentrée hypersonique le long du grand cercle
           if (p < 0.15) {
-            for (let k = 1; k <= 5; k++) {
-              const tp = Math.max(0, p - k * 0.008);
-              const tLng = origin.lng + (targetCoord.lng - origin.lng) * tp;
-              const tLat = origin.lat + (targetCoord.lat - origin.lat) * tp;
+            for (let k = 1; k <= 6; k++) {
+              const tp = Math.max(0, p - k * 0.007);
+              const [tLng, tLat] = interpolateGeodesicPoint(origin.lng, origin.lat, targetCoord.lng, targetCoord.lat, tp);
               const tAlt = 4 * maxAlt * tp * (1 - tp);
               particleList.push({
                 position: [tLng, tLat, tAlt],
-                color: [239, 68, 68, Math.max(0, 255 - k * 45)],
-                size: Math.max(2, 6 - k * 0.8)
+                color: [239, 68, 68, Math.max(0, 255 - k * 40)],
+                size: Math.max(2, 6.5 - k * 0.75)
               });
             }
           } else if (p >= 0.68) {
-            const wakeCount = 4 + Math.round(strikeCoupling.plasmaIntensity * 5);
+            const wakeCount = 5 + Math.round(strikeCoupling.plasmaIntensity * 6);
             for (let k = 1; k <= wakeCount; k++) {
-              const tp = Math.max(0, p - k * (0.005 + strikeCoupling.plasmaIntensity * 0.004));
-              const tLng = origin.lng + (targetCoord.lng - origin.lng) * tp;
-              const tLat = origin.lat + (targetCoord.lat - origin.lat) * tp;
+              const tp = Math.max(0, p - k * (0.0045 + strikeCoupling.plasmaIntensity * 0.0035));
+              const [tLng, tLat] = interpolateGeodesicPoint(origin.lng, origin.lat, targetCoord.lng, targetCoord.lat, tp);
               const tAlt = 4 * maxAlt * tp * (1 - tp);
-              const plasmaAlpha = Math.max(0, Math.floor((225 + strikeCoupling.plasmaIntensity * 30) - k * 25));
+              const plasmaAlpha = Math.max(0, Math.floor((230 + strikeCoupling.plasmaIntensity * 25) - k * 21));
               particleList.push({
                 position: [tLng, tLat, tAlt],
                 color: strikeCoupling.plasmaIntensity > 0.35
                   ? [56, 189, 248, plasmaAlpha]
                   : [249, 115, 22, plasmaAlpha],
-                size: Math.max(2, 5 + strikeCoupling.plasmaIntensity * 4 - k * 0.5)
+                size: Math.max(2, 5.5 + strikeCoupling.plasmaIntensity * 4 - k * 0.45)
               });
             }
           }
@@ -1001,7 +928,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
               getRadius: (d: any) => d.size,
               radiusUnits: 'pixels',
               stroked: true,
-              getLineColor: [255, 255, 255, 255],
+              getLineColor: [255, 255, 255, 220],
               lineWidthMinPixels: 1,
               pickable: false,
               parameters: { depthTest: true }
@@ -1361,22 +1288,100 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           }
         }
 
-        // Mushroom Cloud point-cloud (géodésique + plafond visuel)
-        const strikeMushroomCloudData = calculateMushroomCloud(targetCoord, environmentParams, strikeYield, strikeDetonationMs);
-        if (environmentParams?.showMushroomCloud && strikeMushroomCloudData.length > 0) {
+        // Nuage de Wilson (condensation éphémère derrière l'onde de souffle, T+750..3800ms)
+        const wilsonData = generateWilsonCloudData(
+          targetCoord,
+          strikeRadii.fireball,
+          strikeRadii.moderateBlast,
+          strikeYield,
+          strikeDetonationMs
+        );
+        if (wilsonData.active) {
           activeLayers.push(
+            new PolygonLayer({
+              id: `wilson-cloud-dome-${strId}`,
+              data: [{ contour: wilsonData.ringPolygon3D }],
+              getPolygon: (d: any) => d.contour,
+              getFillColor: wilsonData.fillColor,
+              stroked: true,
+              getLineColor: wilsonData.lineColor,
+              getLineWidth: 2,
+              lineWidthUnits: 'pixels',
+              pickable: false,
+              parameters: { depthTest: true }
+            }),
+            new PathLayer({
+              id: `wilson-cloud-ring-${strId}`,
+              data: [{ path: wilsonData.outerRingPath3D }],
+              getPath: (d: any) => d.path,
+              getColor: wilsonData.lineColor,
+              getWidth: 3,
+              widthUnits: 'pixels',
+              pickable: false,
+              parameters: { depthTest: true }
+            }),
             new PointCloudLayer({
-              id: `mushroom-cloud-layer-${strId}`,
-              data: strikeMushroomCloudData,
+              id: `wilson-cloud-halo-${strId}`,
+              data: wilsonData.haloPoints,
               getPosition: (d: any) => d.position,
               getNormal: (d: any) => d.normal,
               getColor: (d: any) => d.color,
-              pointSize: 3,
+              pointSize: 3.5,
               sizeUnits: 'pixels',
               pickable: false,
-              parameters: { depthTest: true } 
+              parameters: { depthTest: true }
             })
           );
+        }
+
+        // Champignon convectif toroïdal multi-couches (particules graduées + base surge au pied)
+        const toroidalMushroom = generateToroidalMushroomPoints(targetCoord, environmentParams, strikeYield, strikeDetonationMs);
+        if (environmentParams?.showMushroomCloud && (toroidalMushroom.coarsePoints.length > 0 || toroidalMushroom.finePoints.length > 0)) {
+          if (toroidalMushroom.baseSurgePoints.length > 0) {
+            activeLayers.push(
+              new PointCloudLayer({
+                id: `mushroom-base-surge-${strId}`,
+                data: toroidalMushroom.baseSurgePoints,
+                getPosition: (d: any) => d.position,
+                getNormal: (d: any) => d.normal,
+                getColor: (d: any) => d.color,
+                pointSize: 3.5,
+                sizeUnits: 'pixels',
+                pickable: false,
+                parameters: { depthTest: true }
+              })
+            );
+          }
+          if (toroidalMushroom.coarsePoints.length > 0) {
+            activeLayers.push(
+              new PointCloudLayer({
+                id: `mushroom-cloud-coarse-${strId}`,
+                data: toroidalMushroom.coarsePoints,
+                getPosition: (d: any) => d.position,
+                getNormal: (d: any) => d.normal,
+                getColor: (d: any) => d.color,
+                pointSize: 5,
+                sizeUnits: 'pixels',
+                pickable: false,
+                parameters: { depthTest: true }
+              })
+            );
+          }
+          if (toroidalMushroom.finePoints.length > 0) {
+            activeLayers.push(
+              new PointCloudLayer({
+                id: `mushroom-cloud-fine-${strId}`,
+                data: toroidalMushroom.finePoints,
+                getPosition: (d: any) => d.position,
+                getNormal: (d: any) => d.normal,
+                getColor: (d: any) => d.color,
+                pointSize: 2.5,
+                sizeUnits: 'pixels',
+                pickable: false,
+                parameters: { depthTest: true }
+              })
+            );
+          }
         }
 
         // Maritime flood & tsunami progress waves — évalués individuellement par cible !
@@ -1571,14 +1576,20 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           ...(viewState?.transitionDuration ? { transitionDuration: viewState.transitionDuration } : {})
         }}
         onViewStateChange={({ viewState: rawNextVs, interactionState }) => {
-          const isUserOrTransition = Boolean(
+          const isUserInteraction = Boolean(
             interactionState?.isDragging ||
             interactionState?.isPanning ||
             interactionState?.isZooming ||
-            interactionState?.isRotating ||
+            interactionState?.isRotating
+          );
+          const isUserOrTransition = Boolean(
+            isUserInteraction ||
             interactionState?.inTransition
           );
           if (!isUserOrTransition) return;
+          if (isUserInteraction && missileCameraEnabled && simulationMode === 'ballistic') {
+            onDisableMissileCamera?.();
+          }
           const nextVs = rawNextVs as {
             longitude?: number;
             latitude?: number;
@@ -1711,6 +1722,29 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           >
             <Globe className="w-4 h-4" />
           </button>
+          {onToggleMissileCamera && (
+            <>
+              <div className="w-[1px] h-5 bg-zinc-800" />
+              <button
+                type="button"
+                onClick={() => {
+                  soundEngine.playUiClick();
+                  onToggleMissileCamera();
+                }}
+                aria-label="Activer ou désactiver la caméra embarquée sur le missile"
+                aria-pressed={missileCameraEnabled}
+                className={`min-h-11 min-w-11 lg:px-3 flex items-center justify-center gap-1.5 transition-colors duration-200 cursor-pointer font-mono text-[10px] uppercase tracking-wider font-bold ${
+                  missileCameraEnabled
+                    ? 'bg-red-950/80 text-red-300 hover:bg-red-900/70'
+                    : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900'
+                }`}
+                title="Caméra embarquée sur le nez du vecteur balistique"
+              >
+                <Rocket className={`w-3.5 h-3.5 shrink-0 ${missileCameraEnabled ? 'text-red-400' : ''}`} />
+                <span className="hidden lg:inline">Cam. Missile</span>
+              </button>
+            </>
+          )}
           <div className="w-[1px] h-5 bg-zinc-800" />
           <button
             type="button"

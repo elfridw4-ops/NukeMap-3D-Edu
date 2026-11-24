@@ -15,6 +15,7 @@ import {
   computeBallisticImpactCoupling,
   ComputedStrikeTiming,
 } from './lib/nuclearMath';
+import { computeMissileCameraViewState } from './lib/visualEffects3d';
 import { WeaponConfig, LaunchParams, EnvironmentParams, PastStrike, StrikeBallisticStatus } from './types';
 import {
   fetchAutomaticGeoData,
@@ -72,6 +73,7 @@ export default function App() {
 
   const [simulationMode, setSimulationMode] = useState<'instant' | 'ballistic'>('instant');
   const [flightProgress, setFlightProgress] = useState<number>(0);
+  const [missileCameraEnabled, setMissileCameraEnabled] = usePersistedState<boolean>('missileCameraEnabled', false);
   // Message d'erreur balistique en ligne (remplace window.alert interdit en iframe)
   const [ballisticError, setBallisticError] = useState<string | null>(null);
 
@@ -755,6 +757,55 @@ export default function App() {
     return () => cancelAnimationFrame(animId);
   }, [simulationMode, isBallisticRunning, isBallisticPaused, launchedTimings, effectiveYield, weapon.weaponType, environmentParams.explosionType]);
 
+  // Suivi automatique de la « Caméra Missile » embarquée le long de l'arc géodésique
+  useEffect(() => {
+    if (!missileCameraEnabled || simulationMode !== 'ballistic' || !origin || !target) return;
+    if (launchedTimings.length === 0 || (!isBallisticRunning && ballisticClockMs <= 0)) return;
+
+    const trackedId = strikeBallisticStates?.['current-target']?.inRange
+      ? 'current-target'
+      : launchedTimings.find((t) => t.inRange)?.id;
+    if (!trackedId) return;
+
+    const trackedTargetCoord = activeStrikeTargets.find((s) => s.id === trackedId)?.target ?? target;
+    const trackedState = strikeBallisticStates?.[trackedId];
+    if (!trackedTargetCoord || !trackedState) return;
+    if (!Number.isFinite(trackedTargetCoord.lat) || !Number.isFinite(trackedTargetCoord.lng)) return;
+
+    // Suit pendant le vol + les 4,5 premières secondes de la boule de feu/champignon post-impact
+    if (trackedState.detonationTimeMs !== null && trackedState.detonationTimeMs > 4500) {
+      return;
+    }
+
+    const cam = computeMissileCameraViewState({
+      origin,
+      target: trackedTargetCoord,
+      progress: trackedState.progress,
+      apogeeKm: flightProfile.altitudeKm,
+      detonationTimeMs: trackedState.detonationTimeMs,
+    });
+
+    setViewState({
+      longitude: cam.longitude,
+      latitude: cam.latitude,
+      zoom: cam.zoom,
+      pitch: cam.pitch,
+      bearing: cam.bearing,
+    });
+  }, [
+    missileCameraEnabled,
+    simulationMode,
+    origin,
+    target,
+    activeStrikeTargets,
+    launchedTimings,
+    isBallisticRunning,
+    ballisticClockMs,
+    strikeBallisticStates,
+    flightProfile.altitudeKm,
+    setViewState,
+  ]);
+
   // Play/Pause/Replay detonation animation loop that drives the map overlays in instant / fallback mode
   useEffect(() => {
     if (simulationMode === 'ballistic' && launchedTimings.length > 0) return;
@@ -1071,6 +1122,25 @@ export default function App() {
           strikeBallisticStates={strikeBallisticStates}
           soundEnabled={soundEnabled}
           onToggleSound={handleToggleSound}
+          missileCameraEnabled={missileCameraEnabled}
+          onToggleMissileCamera={() => {
+            const next = !missileCameraEnabled;
+            setMissileCameraEnabled(next);
+            if (next && simulationMode === 'ballistic' && origin && target && !isBallisticRunning) {
+              const previewCam = computeMissileCameraViewState({
+                origin,
+                target,
+                progress: flightProgress > 0 && flightProgress < 1 ? flightProgress : 0.02,
+                apogeeKm: flightProfile.altitudeKm,
+                detonationTimeMs: null,
+              });
+              setViewState({
+                ...previewCam,
+                transitionDuration: 750,
+              } as any);
+            }
+          }}
+          onDisableMissileCamera={() => setMissileCameraEnabled(false)}
           onReturnToPortal={() => setCurrentTab('landing')}
           onMapClick={(lng, lat) => {
             cancelFlight();
