@@ -2,8 +2,8 @@
 
 > NUKEMAP EDU est une application web progressive (PWA) éducative et scientifique modélisant en 2D/3D les effets physiques d'explosions nucléaires et radiologiques, la balistique intercontinentale, la dispersion atmosphérique des retombées et la génération hydrodynamique de tsunamis côtiers.
 
-URL canonique : https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/
-Console interactive directe : https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/?autostart=1
+URL canonique : https://ais-pre-fzvmzxocs5ijp3lhdhfanl-156867150624.europe-west1.run.app/
+Console interactive directe : https://ais-pre-fzvmzxocs5ijp3lhdhfanl-156867150624.europe-west1.run.app/?autostart=1
 Langue principale : Français (`fr`)
 
 ---

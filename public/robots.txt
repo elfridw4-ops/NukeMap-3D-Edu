@@ -1,10 +1,33 @@
 # Robots.txt — NUKEMAP EDU
 User-agent: *
 Allow: /
+Allow: /og-image.jpg
 Allow: /llms.txt
 Allow: /llms-full.txt
 Allow: /sitemap.xml
 Allow: /manifest.json
+
+# Aperçus sociaux / OpenGraph (WhatsApp, X, Facebook, Discord, LinkedIn, Slack, Telegram)
+User-agent: WhatsApp
+Allow: /
+
+User-agent: Twitterbot
+Allow: /
+
+User-agent: facebookexternalhit
+Allow: /
+
+User-agent: LinkedInBot
+Allow: /
+
+User-agent: Discordbot
+Allow: /
+
+User-agent: Slackbot
+Allow: /
+
+User-agent: TelegramBot
+Allow: /
 
 # Indexation moteurs génératifs (GEO / AI Search)
 User-agent: GPTBot
@@ -31,4 +54,4 @@ Allow: /
 User-agent: Applebot-Extended
 Allow: /
 
-Sitemap: https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/sitemap.xml
+Sitemap: https://ais-pre-fzvmzxocs5ijp3lhdhfanl-156867150624.europe-west1.run.app/sitemap.xml

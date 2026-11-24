@@ -4,10 +4,10 @@
 
 ## Accès & Points d'entrée
 
-- [Portail Pédagogique & Documentation Scientifique](https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/): Présentation des modèles physiques, cas pratiques académiques et FAQ technique.
-- [Console de Simulation 3D Interactive](https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/?autostart=1): Carte vectorielle MapLibre + Deck.gl v9 avec calcul en direct des zones de surpression, brûlures thermiques, trajectoires ICBM/SLBM et bilan démographique.
-- [Documentation Complète pour Moteurs IA (llms-full.txt)](https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/llms-full.txt): Détail complet des formules physiques, des vecteurs de livraison et de la provenance des données.
-- [Sitemap XML](https://ais-pre-3myvpudpehnkhkhtlwgvz4-156867150624.europe-west1.run.app/sitemap.xml): Plan d'indexation des vues principales.
+- [Portail Pédagogique & Documentation Scientifique](https://ais-pre-fzvmzxocs5ijp3lhdhfanl-156867150624.europe-west1.run.app/): Présentation des modèles physiques, cas pratiques académiques et FAQ technique.
+- [Console de Simulation 3D Interactive](https://ais-pre-fzvmzxocs5ijp3lhdhfanl-156867150624.europe-west1.run.app/?autostart=1): Carte vectorielle MapLibre + Deck.gl v9 avec calcul en direct des zones de surpression, brûlures thermiques, trajectoires ICBM/SLBM et bilan démographique.
+- [Documentation Complète pour Moteurs IA (llms-full.txt)](https://ais-pre-fzvmzxocs5ijp3lhdhfanl-156867150624.europe-west1.run.app/llms-full.txt): Détail complet des formules physiques, des vecteurs de livraison et de la provenance des données.
+- [Sitemap XML](https://ais-pre-fzvmzxocs5ijp3lhdhfanl-156867150624.europe-west1.run.app/sitemap.xml): Plan d'indexation des vues principales.
 
 ## Modèles Physiques & Méthodologie
 

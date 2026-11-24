@@ -1,5 +1,5 @@
-const CACHE_NAME = 'nukemap-edu-v4';
-const APP_SHELL = ['/', '/index.html', '/manifest.json'];
+const CACHE_NAME = 'nukemap-edu-v5';
+const APP_SHELL = ['/', '/index.html', '/manifest.json', '/og-image.jpg'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
