@@ -55,6 +55,7 @@ interface SidebarProps {
     minFlightMin: number;
     maxFlightMin: number;
     impactedCount: number;
+    visualDurationMs?: number;
   };
 }
 

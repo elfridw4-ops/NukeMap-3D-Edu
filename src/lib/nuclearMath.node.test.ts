@@ -168,3 +168,150 @@ test('computeMultiStrikeTimings staggers impacts strictly by geodesic distance a
   assert.equal(statesMid['oob-tokyo'].progress, 0);
   assert.equal(statesMid['oob-tokyo'].detonationTimeMs, null);
 });
+
+import {
+  SIMULATION_CEILINGS,
+  clampYieldKt,
+  clampSpeedKmh,
+  clampApogeeKm,
+  computeBallisticImpactCoupling,
+  computeVisualApogeeKm,
+  getGeodesicCirclePolygon,
+} from './nuclearMath';
+import { computeCombinedCasualtyReport } from './populationModel';
+import { searchOfflineLocations, resolveOfflineGeoData } from './geoDataFetcher';
+import { getWorldDemographicDataset } from '../data/worldPopulation';
+
+test('computeCombinedCasualtyReport scales across multiple countries/continents and entire planet without exceeding world population', () => {
+  const worldDataset = getWorldDemographicDataset();
+
+  // 1,500,000 kt (1.5 Gt) sur Paris dépasse la population locale parisienne et touche plusieurs pays d'Europe
+  const gigatonRadii = calculateBlastRadii(1_500_000, 'airburst');
+  const regionalReport = computeCombinedCasualtyReport({
+    strikes: [{ id: 'current-target', target: { lat: 48.8566, lng: 2.3522 }, radii: gigatonRadii, effectiveYield: 1_500_000 }],
+    defaultWeaponType: 'fusion',
+    targetGeoData: null,
+    worldDataset,
+  });
+  assert.ok(regionalReport.fatalities > 2_500_000, `Expected multi-million fatalities, got ${regionalReport.fatalities}`);
+  assert.ok((regionalReport.affectedCountriesCount ?? 0) >= 2);
+  assert.ok(regionalReport.impactScale === 'Continentale' || regionalReport.impactScale === 'Multi-Continentale');
+
+  // 1.5e12 kt (exagération maximale) couvre la planète sans jamais dépasser la population mondiale
+  const planetaryRadii = calculateBlastRadii(1.5e12, 'airburst');
+  const planetaryReport = computeCombinedCasualtyReport({
+    strikes: [{ id: 'current-target', target: { lat: 48.8566, lng: 2.3522 }, radii: planetaryRadii, effectiveYield: 1.5e12 }],
+    defaultWeaponType: 'fusion',
+    targetGeoData: null,
+    worldDataset,
+  });
+  assert.equal(planetaryReport.impactScale, 'Planétaire');
+  assert.ok((planetaryReport.affectedContinents?.length ?? 0) >= 4);
+  assert.ok(planetaryReport.fatalities > 1_000_000_000);
+  const totalAffected = planetaryReport.fatalities + planetaryReport.graveInjures + planetaryReport.lightInjures;
+  assert.ok(totalAffected <= worldDataset.totalWorldPopulation);
+});
+
+test('computeCombinedCasualtyReport handles multi-strike overlap without double-counting and counts coastal tsunami impacts', () => {
+  const worldDataset = getWorldDemographicDataset();
+  const r20kt = calculateBlastRadii(20, 'airburst');
+
+  const singleParis = computeCombinedCasualtyReport({
+    strikes: [{ id: 's1', target: { lat: 48.8566, lng: 2.3522 }, radii: r20kt, effectiveYield: 20 }],
+    defaultWeaponType: 'fission',
+    targetGeoData: null,
+    worldDataset,
+  });
+
+  const doubleParisSameSpot = computeCombinedCasualtyReport({
+    strikes: [
+      { id: 's1', target: { lat: 48.8566, lng: 2.3522 }, radii: r20kt, effectiveYield: 20 },
+      { id: 's2', target: { lat: 48.8566, lng: 2.3522 }, radii: r20kt, effectiveYield: 20 },
+    ],
+    defaultWeaponType: 'fission',
+    targetGeoData: null,
+    worldDataset,
+  });
+  // Double frappe au même endroit : ne doit pas dépasser la population totale de la ville (~2.16M)
+  assert.ok(doubleParisSameSpot.fatalities <= 2_200_000);
+  assert.ok(doubleParisSameSpot.fatalities >= singleParis.fatalities);
+  assert.equal(doubleParisSameSpot.isMultiStrike, true);
+  assert.equal(doubleParisSameSpot.strikeCount, 2);
+
+  // Frappe maritime côtière au large de Tokyo avec rayon d'inondation tsunami
+  const oceanOffTokyo = computeCombinedCasualtyReport({
+    strikes: [{
+      id: 'tsunami-hit',
+      target: { lat: 35.4, lng: 140.4 },
+      radii: calculateBlastRadii(5000, 'surface'),
+      effectiveYield: 5000,
+      tsunamiFloodRadiusM: 65_000,
+    }],
+    defaultWeaponType: 'fusion',
+    targetGeoData: null,
+    worldDataset,
+  });
+  assert.ok(oceanOffTokyo.fatalities + oceanOffTokyo.graveInjures + oceanOffTokyo.lightInjures > 0);
+});
+
+test('ballistic speed & apogee coupling increases impact Mach/kinetic yield and obeys ceilings', () => {
+  assert.equal(clampYieldKt(1e20), SIMULATION_CEILINGS.MAX_YIELD_KT);
+  assert.equal(clampSpeedKmh(9_999_999), SIMULATION_CEILINGS.MAX_SPEED_KMH);
+  assert.equal(clampApogeeKm(5_002_000_000), SIMULATION_CEILINGS.MAX_APOGEE_KM);
+  assert.ok(computeVisualApogeeKm(50_000) <= SIMULATION_CEILINGS.MAX_VISUAL_APOGEE_KM);
+
+  const slowLow = computeBallisticImpactCoupling({
+    baseYieldKt: 20,
+    speedKmh: 900,
+    apogeeKm: 1,
+    vectorId: 'cruise',
+    explosionType: 'surface',
+    surfaceDistKm: 500,
+  });
+  const fastHigh = computeBallisticImpactCoupling({
+    baseYieldKt: 20,
+    speedKmh: 400_000,
+    apogeeKm: 15_000,
+    vectorId: 'icbm',
+    explosionType: 'surface',
+    surfaceDistKm: 5000,
+  });
+
+  assert.ok(fastHigh.impactVelocityMach > slowLow.impactVelocityMach);
+  assert.ok(fastHigh.kineticYieldKt > slowLow.kineticYieldKt);
+  assert.ok(fastHigh.plasmaIntensity > slowLow.plasmaIntensity);
+  assert.ok(fastHigh.craterMultiplier > slowLow.craterMultiplier);
+  assert.ok(fastHigh.seismicBoostMag > slowLow.seismicBoostMag);
+
+  // Durée visuelle adaptative selon vitesse et apogée dans [1.2s, 12s]
+  const origin = { lng: 2.3522, lat: 48.8566 };
+  const target = [{ id: 'nyc', target: { lng: -74.006, lat: 40.7128 } }];
+  const fastSchedule = computeMultiStrikeTimings(origin, target, 450_000, 99_999, 100);
+  const slowSchedule = computeMultiStrikeTimings(origin, target, 900, 99_999, 50_000);
+  assert.ok(fastSchedule.visualDurationMs < slowSchedule.visualDurationMs);
+  assert.ok(fastSchedule.visualDurationMs >= SIMULATION_CEILINGS.MIN_VISUAL_FLIGHT_MS);
+  assert.ok(slowSchedule.visualDurationMs <= SIMULATION_CEILINGS.MAX_VISUAL_FLIGHT_MS);
+});
+
+test('getGeodesicCirclePolygon prevents Mercator polar inflation at 88.657N (0.jpg-4.jpg root cause)', () => {
+  const highLatPoly = getGeodesicCirclePolygon(-10.737, 88.657, 620_000, 72);
+  assert.ok(highLatPoly.length > 10);
+  // Rayon 620 km (~5.57°) depuis 88.657°N ne doit JAMAIS descendre sous ~82°N (contrairement au bug Mercator qui recouvrait l'Europe à 48°N)
+  const minLat = Math.min(...highLatPoly.map((p) => p[1]));
+  assert.ok(minLat > 82, `Expected Arctic circle to stay north of 82N, got minLat=${minLat}`);
+});
+
+test('offline search and offline geo resolver identify cities, countries and open oceans without network', () => {
+  const parisHits = searchOfflineLocations('Paris');
+  assert.ok(parisHits.length > 0);
+  assert.equal(parisHits[0].name, 'Paris');
+
+  const tokyoGeo = resolveOfflineGeoData(35.6762, 139.6503);
+  assert.equal(tokyoGeo.isWater, false);
+  assert.ok(tokyoGeo.autoGeoData.population > 1_000_000);
+
+  const atlanticGeo = resolveOfflineGeoData(28.0, -45.0);
+  assert.equal(atlanticGeo.isWater, true);
+  assert.equal(atlanticGeo.autoGeoData.population, 0);
+});
+

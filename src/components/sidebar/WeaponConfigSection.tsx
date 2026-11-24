@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { WeaponConfig } from '../../types';
-import { WEAPON_PRESETS } from '../../lib/nuclearMath';
+import { WEAPON_PRESETS, SIMULATION_CEILINGS, clampYieldKt } from '../../lib/nuclearMath';
 import { ShieldAlert, ChevronUp } from 'lucide-react';
 
 export interface WeaponConfigSectionProps {
@@ -67,18 +67,24 @@ export function WeaponConfigSection({
               <input
                 id="custom-yield-input"
                 type="number"
-                min="0.01"
+                min={SIMULATION_CEILINGS.MIN_YIELD_KT}
+                max={SIMULATION_CEILINGS.MAX_YIELD_KT}
                 step="10"
                 className="w-full bg-zinc-950 border border-zinc-800/80 rounded-lg p-2.5 text-xs outline-none focus:ring-2 focus:ring-red-500/50 focus:border-red-500/50 transition-all font-mono tabular-nums shadow-inner text-zinc-200"
                 value={customYield}
                 onChange={(e) => {
                   const parsed = parseFloat(e.target.value);
-                  setCustomYield(Number.isFinite(parsed) && parsed > 0 ? Math.max(0.01, parsed) : 0.01);
+                  setCustomYield(Number.isFinite(parsed) && parsed > 0 ? clampYieldKt(parsed) : SIMULATION_CEILINGS.MIN_YIELD_KT);
                 }}
               />
               <p className="text-[10px] text-zinc-400 px-1 tabular-nums">
-                1000 kt = 1 Mégatonne (Mt) • Minimum 0.01 kt
+                1000 kt = 1 Mt • Min 0,01 kt • Plafond {SIMULATION_CEILINGS.MAX_YIELD_KT.toExponential(0)} kt
               </p>
+              {customYield >= SIMULATION_CEILINGS.MAX_YIELD_KT && (
+                <p className="text-[10px] text-amber-400 bg-amber-950/30 border border-amber-800/50 rounded px-2 py-1 font-mono">
+                  Plafond physique maximal atteint (10¹³ kt) — rendement visuel borné à la demi-sphère terrestre.
+                </p>
+              )}
             </div>
           </motion.div>
         )}

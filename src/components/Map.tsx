@@ -18,7 +18,16 @@ import {
   TsunamiMetrics,
   resolveVectorFlightProfile,
   calculateFalloutPlumeLengthKm,
+  getGeodesicDestination,
+  getGeodesicCirclePolygon,
+  clampVisualRadiusM,
+  computeVisualApogeeKm,
+  computeBallisticImpactCoupling,
+  calculateTsunamiMetrics,
+  estimateClosestSeaDistanceKm,
+  haversineKm,
 } from '../lib/nuclearMath';
+import { WORLD_LANDMASS_POLYGONS, isCoordinateOnLand } from '../data/worldPopulation';
 import { soundEngine } from '../lib/soundEngine';
 
 // Calcule la couleur, pulsation et rayon de la boule de feu pour une détonation donnée
@@ -92,50 +101,46 @@ interface MapViewProps {
   strikeBallisticStates?: Record<string, StrikeBallisticStatus>;
 }
 
-// Helper pour calculer une coordonnée de destination
-function getDestination(lng: number, lat: number, distanceKm: number, bearingDeg: number) {
-  const R = 6371; // Rayon de la Terre en km
-  const d = distanceKm / R;
-  const brng = bearingDeg * Math.PI / 180;
-  const lat1 = lat * Math.PI / 180;
-  const lon1 = lng * Math.PI / 180;
-
-  const lat2 = Math.asin(Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brng));
-  const lon2 = lon1 + Math.atan2(Math.sin(brng) * Math.sin(d) * Math.cos(lat1), Math.cos(d) - Math.sin(lat1) * Math.sin(lat2));
-
-  return [(lon2 * 180) / Math.PI, (lat2 * 180) / Math.PI];
-}
-
-// Helper pour calculer les points d'un cercle pour les PathLayers de l'onde de choc
-function getCirclePoints(clon: number, clat: number, radiusMeters: number, steps = 64) {
-  const points = [];
-  for (let i = 0; i <= steps; i++) {
-    const angle = (i * 360) / steps;
-    points.push(getDestination(clon, clat, radiusMeters / 1000, angle));
+// Helper pour obtenir uniquement la frontière d'un cercle géodésique pour les PathLayers (sans segment de fermeture polaire)
+function getGeodesicRingPath(clon: number, clat: number, radiusMeters: number, steps = 72): [number, number][] {
+  const safeR = clampVisualRadiusM(radiusMeters);
+  if (safeR <= 0) return [];
+  const angularRad = safeR / (6371 * 1000);
+  const latRad = (Math.max(-89.999, Math.min(89.999, clat)) * Math.PI) / 180;
+  const enclosesPole = latRad + angularRad > Math.PI / 2 - 1e-4 || latRad - angularRad < -Math.PI / 2 + 1e-4;
+  const poly = getGeodesicCirclePolygon(clon, clat, safeR, steps);
+  if (enclosesPole && poly.length > 3) {
+    // Exclut les 3 derniers points artificiels de fermeture du cap polaire pour PathLayer
+    return poly.slice(0, poly.length - 3);
   }
-  return points;
+  return poly;
 }
 
 function calculateActiveDebris(
   targetAddress: { lng: number; lat: number },
   detonationTimeMs: number,
   fireballDebrisParticles: any[],
-  fireballRadius: number
+  fireballRadius: number,
+  plasmaIntensity: number = 0
 ) {
   if (detonationTimeMs < 80 || detonationTimeMs > 1500) return [];
-  const tProgress = (detonationTimeMs - 80) / 1420; 
+  const tProgress = (detonationTimeMs - 80) / 1420;
+  const kineticBoost = 1 + Math.max(0, plasmaIntensity) * 0.75;
+  const cappedFireballM = Math.min(clampVisualRadiusM(fireballRadius), 2_500_000);
   return fireballDebrisParticles.map(p => {
-    const r = fireballRadius * p.speedFactor * tProgress;
-    const latOffset = (r * Math.cos(p.angle)) / 111320;
-    const lonOffset = (r * Math.sin(p.angle)) / (111320 * Math.cos(targetAddress.lat * Math.PI / 180));
+    const rKm = (cappedFireballM * p.speedFactor * kineticBoost * tProgress) / 1000;
+    const bearingDeg = (p.angle * 180) / Math.PI;
+    const pos = getGeodesicDestination(targetAddress.lng, targetAddress.lat, rKm, bearingDeg);
     const alpha = Math.max(0, Math.floor((1 - tProgress) * 220));
-    const color = p.randomSeed > 0.5 
-      ? [254, 240, 138, alpha] 
-      : [239, 68, 68, alpha];  
+    const color = plasmaIntensity > 0.4 && p.randomSeed > 0.72
+      ? [125, 211, 252, alpha]
+      : p.randomSeed > 0.5
+        ? [254, 240, 138, alpha]
+        : [239, 68, 68, alpha];
     return {
-      position: [targetAddress.lng + lonOffset, targetAddress.lat + latOffset],
+      position: pos,
       color,
-      size: p.size
+      size: p.size * (1 + plasmaIntensity * 0.25)
     };
   });
 }
@@ -149,14 +154,14 @@ function calculateActiveFalloutDebris(
 ) {
   if (detonationTimeMs < 5000 || environmentParams.explosionType !== 'surface') return [];
   const deltaT = (detonationTimeMs - 5000) / 5000; 
-  const falloutLengthKm = calculateFalloutPlumeLengthKm(heavyBlastRadius, environmentParams.windSpeed);
+  const falloutLengthKm = Math.min(8000, calculateFalloutPlumeLengthKm(heavyBlastRadius, environmentParams.windSpeed));
   const direction = environmentParams.windDirection;
 
   return falloutDriftParticles.map(p => {
     const elapsedDistanceFraction = p.distanceFraction + (deltaT * 0.4 * p.horizontalSpeedFactor);
     const currentDistKm = Math.min(1.0, elapsedDistanceFraction) * falloutLengthKm;
     const spread = (1 - Math.abs(elapsedDistanceFraction - 0.6)) * 25 * p.spreadFraction;
-    const groundPos = getDestination(targetAddress.lng, targetAddress.lat, currentDistKm, direction + spread);
+    const groundPos = getGeodesicDestination(targetAddress.lng, targetAddress.lat, currentDistKm, direction + spread);
     const initialHeight = 3500 + Math.sin(p.distanceFraction * 13) * 1000;
     const z = Math.max(0, initialHeight - (deltaT * 4000 * p.fallSpeed));
     const groundImpact = z === 0;
@@ -194,7 +199,7 @@ function calculateShockwaveBands(
     const distOpacity = Math.floor(baseOpacity * 0.3 * (1 - i / 5));
     if (distOpacity > 0) {
       bands.push({
-        path: getCirclePoints(targetAddress.lng, targetAddress.lat, currentBlastWaveRadius * scale, 72), 
+        path: getGeodesicRingPath(targetAddress.lng, targetAddress.lat, currentBlastWaveRadius * scale, 72), 
         color: [255, 255, 255, distOpacity], 
         width: 10 - i // diminishing line width
       });
@@ -203,7 +208,7 @@ function calculateShockwaveBands(
 
   // Front principal
   bands.push({ 
-    path: getCirclePoints(targetAddress.lng, targetAddress.lat, currentBlastWaveRadius, 72), 
+    path: getGeodesicRingPath(targetAddress.lng, targetAddress.lat, currentBlastWaveRadius, 72), 
     color: [frontR, frontG, frontB, baseOpacity], 
     width: 4.5 
   });
@@ -211,12 +216,12 @@ function calculateShockwaveBands(
   // 2. Une traînée d'onde secondaire (réverbération) : 2 anneaux concentriques 
   // légèrement en retard sur le front principal
   bands.push({ 
-    path: getCirclePoints(targetAddress.lng, targetAddress.lat, currentBlastWaveRadius * 0.95, 72), 
+    path: getGeodesicRingPath(targetAddress.lng, targetAddress.lat, currentBlastWaveRadius * 0.95, 72), 
     color: [frontR, frontG, frontB, Math.floor(baseOpacity * 0.6)], 
     width: 3 
   });
   bands.push({ 
-    path: getCirclePoints(targetAddress.lng, targetAddress.lat, currentBlastWaveRadius * 0.90, 72), 
+    path: getGeodesicRingPath(targetAddress.lng, targetAddress.lat, currentBlastWaveRadius * 0.90, 72), 
     color: [frontR, frontG, frontB, Math.floor(baseOpacity * 0.3)], 
     width: 1.5 
   });
@@ -238,17 +243,17 @@ function calculateMushroomCloud(
   const rawHeight = 3000 * Math.pow(effectiveYield, 0.25);
   const tropopauseM = (environmentParams.tropopauseAltitudeKm || 11.5) * 1000;
   
-  let height = rawHeight;
-  let capRadius = 600 * Math.pow(effectiveYield, 0.3);
+  let height = Math.min(140_000, rawHeight);
+  let capRadius = Math.min(220_000, 600 * Math.pow(effectiveYield, 0.3));
   
   if (effectiveYield < 1000 && rawHeight > tropopauseM * 0.8) {
-    height = Math.min(rawHeight, tropopauseM);
+    height = Math.min(height, tropopauseM);
     if (height === tropopauseM) {
-      capRadius *= 1.4;
+      capRadius = Math.min(220_000, capRadius * 1.4);
     }
   }
   
-  const stalkRadius = 150 * Math.pow(effectiveYield, 0.3);
+  const stalkRadius = Math.min(55_000, 150 * Math.pow(effectiveYield, 0.3));
   const stalkHeight = height * 0.7;
 
   const mushroomProgress = Math.min(1, (detonationTimeMs - 2000) / 6000);
@@ -294,13 +299,16 @@ function calculateMushroomCloud(
       color = [shade, shade, shade, Math.floor((80 + r1p * 60) * mushroomProgress)];
     }
 
-    const dx = r * Math.cos(theta) + swayDistance * (z / height);
+    const dx = r * Math.cos(theta) + swayDistance * (z / Math.max(1, height));
     const dy = r * Math.sin(theta);
-    const latOffset = dy / 111320;
-    const lonOffset = dx / (111320 * Math.cos(targetAddress.lat * Math.PI / 180));
+    const offsetDistKm = Math.hypot(dx, dy) / 1000;
+    const bearingDeg = (Math.atan2(dx, dy) * 180) / Math.PI;
+    const pos = offsetDistKm > 0
+      ? getGeodesicDestination(targetAddress.lng, targetAddress.lat, offsetDistKm, bearingDeg)
+      : [targetAddress.lng, targetAddress.lat];
 
     points.push({
-      position: [targetAddress.lng + lonOffset, targetAddress.lat + latOffset, z],
+      position: [pos[0], Math.max(-85, Math.min(85, pos[1])), z],
       color,
       normal: [0, 0, 1]
     });
@@ -468,6 +476,28 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
   const [providerInput, setProviderInput] = useState<MapProvider>(mapProvider);
   const [configFeedback, setConfigFeedback] = useState<string | null>(null);
   const [mapErrorMsg, setMapErrorMsg] = useState<string | null>(null);
+  const [hasTileError, setHasTileError] = useState<boolean>(false);
+  const [isOffline, setIsOffline] = useState<boolean>(() =>
+    typeof navigator !== 'undefined' ? !navigator.onLine : false
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onOnline = () => {
+      setIsOffline(false);
+      setHasTileError(false);
+      setMapErrorMsg(null);
+    };
+    const onOffline = () => {
+      setIsOffline(true);
+    };
+    window.addEventListener('online', onOnline);
+    window.addEventListener('offline', onOffline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('offline', onOffline);
+    };
+  }, []);
 
   // Synchronisation de l'affichage du mode jour/nuit/satellite dans le localStorage
   useEffect(() => {
@@ -678,69 +708,133 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
 
   const layers = useMemo(() => {
     const activeLayers: any[] = [];
-    
-    // Render past strikes only when not in multi-strike mode (they are static footprints in single-shot mode)
+
+    // Fond cartographique vectoriel hors ligne (océan + masses continentales + graticule)
+    // Visible uniquement hors connexion ou en cas d'échec de chargement des tuiles réseau
+    if (isOffline || hasTileError) {
+      const graticulePaths: Array<{ path: [number, number][] }> = [];
+      for (let lat = -60; lat <= 60; lat += 30) {
+        const line: [number, number][] = [];
+        for (let lon = -180; lon <= 180; lon += 15) line.push([lon, lat]);
+        graticulePaths.push({ path: line });
+      }
+      for (let lon = -150; lon <= 180; lon += 30) {
+        graticulePaths.push({ path: [[lon, -82], [lon, 82]] });
+      }
+
+      // Grille tactique locale adaptative lorsque la carte est zoomée hors ligne
+      if (viewState.zoom >= 3.5) {
+        const step = viewState.zoom >= 9 ? 0.25 : viewState.zoom >= 6 ? 1 : 5;
+        const span = viewState.zoom >= 9 ? 2.5 : viewState.zoom >= 6 ? 10 : 35;
+        const minLat = Math.max(-82, Math.floor((viewState.latitude - span) / step) * step);
+        const maxLat = Math.min(82, Math.ceil((viewState.latitude + span) / step) * step);
+        const minLon = Math.max(-180, Math.floor((viewState.longitude - span) / step) * step);
+        const maxLon = Math.min(180, Math.ceil((viewState.longitude + span) / step) * step);
+        for (let lat = minLat; lat <= maxLat + 1e-6; lat += step) {
+          graticulePaths.push({ path: [[minLon, lat], [maxLon, lat]] });
+        }
+        for (let lon = minLon; lon <= maxLon + 1e-6; lon += step) {
+          graticulePaths.push({ path: [[lon, minLat], [lon, maxLat]] });
+        }
+      }
+
+      activeLayers.push(
+        new PolygonLayer({
+          id: 'offline-world-ocean-backdrop',
+          data: [{ contour: [[-180, -85.05], [180, -85.05], [180, 85.05], [-180, 85.05], [-180, -85.05]] }],
+          getPolygon: (d: any) => d.contour,
+          getFillColor: mapMode === 'day' ? [203, 224, 240, 235] : [9, 17, 30, 245],
+          stroked: false,
+          pickable: false,
+          parameters: { depthTest: false },
+        }),
+        new PolygonLayer({
+          id: 'offline-world-landmasses',
+          data: WORLD_LANDMASS_POLYGONS,
+          getPolygon: (d: any) => d.ring,
+          getFillColor: mapMode === 'day' ? [229, 231, 235, 250] : [33, 46, 66, 245],
+          stroked: true,
+          getLineColor: mapMode === 'day' ? [100, 116, 139, 200] : [94, 118, 148, 225],
+          getLineWidth: 1.5,
+          lineWidthUnits: 'pixels',
+          pickable: false,
+          parameters: { depthTest: false },
+        }),
+        new PathLayer({
+          id: 'offline-world-graticule',
+          data: graticulePaths,
+          getPath: (d: any) => d.path,
+          getColor: mapMode === 'day' ? [148, 163, 184, 75] : [71, 85, 105, 95],
+          getWidth: 1,
+          widthUnits: 'pixels',
+          pickable: false,
+          parameters: { depthTest: false },
+        })
+      );
+    }
+
+    // Render past strikes only when not in multi-strike mode (they are static geodesic footprints in single-shot mode)
     if (!multiStrikeMode && pastStrikes && pastStrikes.length > 0) {
       pastStrikes.forEach(strike => {
         const pos = [strike.target.lng, strike.target.lat];
+        const pastFireballPoly = getGeodesicCirclePolygon(strike.target.lng, strike.target.lat, strike.radii.fireball, 64);
+        const pastHeavyPoly = getGeodesicCirclePolygon(strike.target.lng, strike.target.lat, strike.radii.heavyBlast, 64);
+        const pastModPoly = getGeodesicCirclePolygon(strike.target.lng, strike.target.lat, strike.radii.moderateBlast, 64);
+        const pastThermalPoly = getGeodesicCirclePolygon(strike.target.lng, strike.target.lat, strike.radii.thermal1st, 72);
+
         activeLayers.push(
-          // 1. Fireball
-          new ScatterplotLayer({
-            id: `past-fireball-${strike.id}`,
-            data: [{ position: pos }],
-            getPosition: (d: any) => d.position,
-            getFillColor: [249, 115, 22, 60], 
-            getRadius: () => strike.radii.fireball,
-            pickable: false,
-            parameters: { depthTest: false }
-          }),
-          // 2. Heavy blast (20 psi)
-          new ScatterplotLayer({
-            id: `past-heavy-blast-${strike.id}`,
-            data: [{ position: pos }],
-            getPosition: (d: any) => d.position,
-            getFillColor: [239, 68, 68, 15], 
-            stroked: true,
-            getLineColor: [239, 68, 68, 100],
-            lineWidthMinPixels: 1,
-            getRadius: () => strike.radii.heavyBlast,
-            pickable: false,
-            parameters: { depthTest: false }
-          }),
-          // 3. Moderate blast (5 psi)
-          new ScatterplotLayer({
-            id: `past-moderate-blast-${strike.id}`,
-            data: [{ position: pos }],
-            getPosition: (d: any) => d.position,
-            getFillColor: [217, 119, 6, 12],
-            stroked: true,
-            getLineColor: [217, 119, 6, 80],
-            lineWidthMinPixels: 1,
-            getRadius: () => strike.radii.moderateBlast,
-            pickable: false,
-            parameters: { depthTest: false }
-          }),
-          // 4. Thermal burns 1st degree (Outer radius)
-          new ScatterplotLayer({
+          new PolygonLayer({
             id: `past-thermal-${strike.id}`,
-            data: [{ position: pos }],
-            getPosition: (d: any) => d.position,
-            getFillColor: [234, 179, 8, 4],
+            data: [{ contour: pastThermalPoly }],
+            getPolygon: (d: any) => d.contour,
+            getFillColor: [234, 179, 8, 12],
             stroked: true,
-            getLineColor: [234, 179, 8, 50],
-            lineWidthMinPixels: 1,
-            getRadius: () => strike.radii.thermal1st,
+            getLineColor: [234, 179, 8, 80],
+            getLineWidth: 1,
+            lineWidthUnits: 'pixels',
             pickable: false,
             parameters: { depthTest: false }
           }),
-          // 5. Strike Center point
+          new PolygonLayer({
+            id: `past-moderate-blast-${strike.id}`,
+            data: [{ contour: pastModPoly }],
+            getPolygon: (d: any) => d.contour,
+            getFillColor: [217, 119, 6, 18],
+            stroked: true,
+            getLineColor: [217, 119, 6, 110],
+            getLineWidth: 1,
+            lineWidthUnits: 'pixels',
+            pickable: false,
+            parameters: { depthTest: false }
+          }),
+          new PolygonLayer({
+            id: `past-heavy-blast-${strike.id}`,
+            data: [{ contour: pastHeavyPoly }],
+            getPolygon: (d: any) => d.contour,
+            getFillColor: [239, 68, 68, 25],
+            stroked: true,
+            getLineColor: [239, 68, 68, 130],
+            getLineWidth: 1,
+            lineWidthUnits: 'pixels',
+            pickable: false,
+            parameters: { depthTest: false }
+          }),
+          new PolygonLayer({
+            id: `past-fireball-${strike.id}`,
+            data: [{ contour: pastFireballPoly }],
+            getPolygon: (d: any) => d.contour,
+            getFillColor: [249, 115, 22, 65],
+            stroked: false,
+            pickable: false,
+            parameters: { depthTest: false }
+          }),
           new ScatterplotLayer({
             id: `past-center-${strike.id}`,
             data: [{ position: pos }],
             getPosition: (d: any) => d.position,
-            getFillColor: [255, 255, 255, 200],
-            getRadius: () => 100,
-            radiusMinPixels: 3,
+            getFillColor: [255, 255, 255, 215],
+            getRadius: 4,
+            radiusUnits: 'pixels',
             stroked: true,
             getLineColor: [0, 0, 0, 255],
             lineWidthMinPixels: 1.5,
@@ -752,22 +846,32 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
     }
     
     const isDetonated = simulationMode === 'instant' || flightProgress === 1;
+    const profile = resolveVectorFlightProfile(launchParams);
 
     // Generate ballistic trajectories for all active strikes simultaneously if in ballistic mode
     if (simulationMode === 'ballistic' && origin && activeStrikes.length > 0) {
-      const profile = resolveVectorFlightProfile(launchParams);
       const altitudeKm = profile.altitudeKm;
+      const visualApogeeKm = computeVisualApogeeKm(altitudeKm);
       const vectorColorHex = profile.colorHex;
 
       const vr = parseInt(vectorColorHex.slice(1, 3), 16);
       const vg = parseInt(vectorColorHex.slice(3, 5), 16);
       const vb = parseInt(vectorColorHex.slice(5, 7), 16);
       const vectorRgb: [number, number, number] = [vr, vg, vb];
-      const maxAlt = altitudeKm * 1000;
+      const maxAlt = visualApogeeKm * 1000;
 
       activeStrikes.forEach(strike => {
         const strId = strike.id;
         const targetCoord = strike.target;
+        const distKm = haversineKm(origin.lat, origin.lng, targetCoord.lat, targetCoord.lng);
+        const strikeCoupling = computeBallisticImpactCoupling({
+          baseYieldKt: strike.effectiveYield,
+          speedKmh: profile.speedKmh,
+          apogeeKm: altitudeKm,
+          vectorId: profile.vectorId,
+          explosionType: environmentParams.explosionType,
+          surfaceDistKm: distKm,
+        });
 
         // Predicted trajectory dotted arc
         const arcSteps = 60;
@@ -815,8 +919,11 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
 
           let activeColor: [number, number, number] = [239, 68, 68];
           if (p < 0.15) { activeColor = [239, 68, 68]; }
-          else if (p >= 0.15 && p < 0.85) { activeColor = [255, 255, 255]; }
-          else { activeColor = [249, 115, 22]; }
+          else if (p >= 0.15 && p < 0.68) { activeColor = [255, 255, 255]; }
+          else {
+            // Phase de rentrée atmosphérique : intensité plasma proportionnelle à vitesse & apogée
+            activeColor = strikeCoupling.plasmaIntensity > 0.35 ? [125, 211, 252] : [249, 115, 22];
+          }
 
           const trailArcPoints = [];
           const trailArcSteps = Math.ceil(p * 45);
@@ -836,8 +943,10 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
                 id: `missile-trail-curve-${strId}`,
                 data: [{ path: trailArcPoints }],
                 getPath: (d: any) => d.path,
-                getColor: [...vectorRgb, 200] as any,
-                getWidth: 3.5,
+                getColor: (p >= 0.68 && strikeCoupling.plasmaIntensity > 0.2
+                  ? [56, 189, 248, 225]
+                  : [...vectorRgb, 200]) as any,
+                getWidth: 3.5 + strikeCoupling.plasmaIntensity * 2.5,
                 widthUnits: 'pixels',
                 pickable: false,
                 parameters: { depthTest: true }
@@ -849,10 +958,10 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           particleList.push({
             position: [currentLng, currentLat, currentAlt],
             color: [...activeColor, 255],
-            size: 650
+            size: 6 + strikeCoupling.plasmaIntensity * 5
           });
 
-          // Plumes
+          // Plumes boost & sillage plasma de rentrée hypersonique
           if (p < 0.15) {
             for (let k = 1; k <= 5; k++) {
               const tp = Math.max(0, p - k * 0.008);
@@ -862,19 +971,23 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
               particleList.push({
                 position: [tLng, tLat, tAlt],
                 color: [239, 68, 68, Math.max(0, 255 - k * 45)],
-                size: 550 - k * 80
+                size: Math.max(2, 6 - k * 0.8)
               });
             }
-          } else if (p >= 0.85) {
-            for (let k = 1; k <= 4; k++) {
-              const tp = Math.max(0, p - k * 0.005);
+          } else if (p >= 0.68) {
+            const wakeCount = 4 + Math.round(strikeCoupling.plasmaIntensity * 5);
+            for (let k = 1; k <= wakeCount; k++) {
+              const tp = Math.max(0, p - k * (0.005 + strikeCoupling.plasmaIntensity * 0.004));
               const tLng = origin.lng + (targetCoord.lng - origin.lng) * tp;
               const tLat = origin.lat + (targetCoord.lat - origin.lat) * tp;
               const tAlt = 4 * maxAlt * tp * (1 - tp);
+              const plasmaAlpha = Math.max(0, Math.floor((225 + strikeCoupling.plasmaIntensity * 30) - k * 25));
               particleList.push({
                 position: [tLng, tLat, tAlt],
-                color: [249, 115, 22, Math.max(0, 220 - k * 50)],
-                size: 450 - k * 60
+                color: strikeCoupling.plasmaIntensity > 0.35
+                  ? [56, 189, 248, plasmaAlpha]
+                  : [249, 115, 22, plasmaAlpha],
+                size: Math.max(2, 5 + strikeCoupling.plasmaIntensity * 4 - k * 0.5)
               });
             }
           }
@@ -886,7 +999,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
               getPosition: (d: any) => d.position,
               getFillColor: (d: any) => d.color,
               getRadius: (d: any) => d.size,
-              radiusMinPixels: 5,
+              radiusUnits: 'pixels',
               stroked: true,
               getLineColor: [255, 255, 255, 255],
               lineWidthMinPixels: 1,
@@ -918,10 +1031,21 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
       const strikeThermalProgress = Math.max(0, Math.min(1, (strikeDetonationMs - 1200) / 3800));
       const strikeFireball = getFireballVisuals(strikeDetonationMs, strikeRadii.fireball);
 
+      const strikePlasmaIntensity = simulationMode === 'ballistic' && origin
+        ? computeBallisticImpactCoupling({
+            baseYieldKt: strikeYield,
+            speedKmh: profile.speedKmh,
+            apogeeKm: profile.altitudeKm,
+            vectorId: profile.vectorId,
+            explosionType: environmentParams.explosionType,
+            surfaceDistKm: haversineKm(origin.lat, origin.lng, targetCoord.lat, targetCoord.lng),
+          }).plasmaIntensity
+        : 0;
+
       // Plume de retombées radioactives (Fallout)
       if (strikeIsDetonated && environmentParams?.explosionType === 'surface' && strikeDetonationMs >= 5000) {
         const currentFalloutProgress = Math.max(0, Math.min(1, (strikeDetonationMs - 5000) / 5000));
-        const falloutLengthKm = calculateFalloutPlumeLengthKm(strikeRadii.heavyBlast, environmentParams.windSpeed) * currentFalloutProgress;
+        const falloutLengthKm = Math.min(8000, calculateFalloutPlumeLengthKm(strikeRadii.heavyBlast, environmentParams.windSpeed) * currentFalloutProgress);
         const direction = environmentParams.windDirection;
         const numPoints = 30;
         const polygon = [];
@@ -933,7 +1057,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           const fraction = i / numPoints;
           const dist = fraction * falloutLengthKm;
           const spread = (1 - Math.abs(fraction - 0.6)) * 25; // 25 degrés max de dispersion
-          polygon.push(getDestination(targetCoord.lng, targetCoord.lat, dist, direction - spread));
+          polygon.push(getGeodesicDestination(targetCoord.lng, targetCoord.lat, dist, direction - spread));
         }
         
         // Bord droit (retour vers la cible)
@@ -941,14 +1065,14 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           const fraction = i / numPoints;
           const dist = fraction * falloutLengthKm;
           const spread = (1 - Math.abs(fraction - 0.6)) * 25;
-          polygon.push(getDestination(targetCoord.lng, targetCoord.lat, dist, direction + spread));
+          polygon.push(getGeodesicDestination(targetCoord.lng, targetCoord.lat, dist, direction + spread));
         }
 
         // Generate dashed border segments for the fallout zone pointillé boundary
         const falloutDashSegments = [];
         const numFalloutSegments = polygon.length;
         for (let i = 0; i < numFalloutSegments - 1; i++) {
-          if (i % 2 === 0) { // Keep only alternating dash lines
+          if (i % 2 === 0) {
             falloutDashSegments.push({ path: [polygon[i], polygon[i + 1]] });
           }
         }
@@ -958,7 +1082,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
             id: `fallout-layer-${strId}`,
             data: [{ contour: polygon }],
             getPolygon: (d: any) => d.contour,
-            getFillColor: [110, 231, 183, Math.floor(40 * currentFalloutProgress)], // Light radioactive green
+            getFillColor: [110, 231, 183, Math.floor(40 * currentFalloutProgress)],
             getLineColor: [16, 185, 129, Math.floor(100 * currentFalloutProgress)],
             getLineWidth: 1,
             lineWidthUnits: 'pixels',
@@ -996,42 +1120,79 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
       }
 
       if (strikeIsDetonated) {
-        // Thermal Radiation Waves appear on timeline (1200ms -> 5000ms)
+        // Anneau d'impact cinétique hypersonique (T+0..750ms lorsque le vecteur arrive à Mach élevé)
+        if (strikePlasmaIntensity > 0.12 && strikeDetonationMs < 750) {
+          const kinProg = strikeDetonationMs / 750;
+          const kinR = clampVisualRadiusM(Math.max(strikeRadii.fireball * 1.4, 2500) * (0.2 + kinProg * 1.5));
+          const kinRingPath = getGeodesicRingPath(targetCoord.lng, targetCoord.lat, kinR, 64);
+          if (kinRingPath.length > 2) {
+            activeLayers.push(
+              new PathLayer({
+                id: `kinetic-impact-ring-${strId}`,
+                data: [{ path: kinRingPath }],
+                getPath: (d: any) => d.path,
+                getColor: [125, 211, 252, Math.floor(240 * (1 - kinProg) * strikePlasmaIntensity)],
+                getWidth: 4 + strikePlasmaIntensity * 4,
+                widthUnits: 'pixels',
+                pickable: false,
+                parameters: { depthTest: false },
+              })
+            );
+          }
+        }
+
+        // Thermal Radiation Waves appear on timeline (1200ms -> 5000ms) — Polygones géodésiques exacts (sans distorsion polaire)
         const curThermalWaveRadius = strikeThermalProgress * strikeRadii.thermal1st;
         if (curThermalWaveRadius > 0) {
+          const r1stPoly = getGeodesicCirclePolygon(
+            targetCoord.lng,
+            targetCoord.lat,
+            Math.min(strikeRadii.thermal1st, curThermalWaveRadius),
+            72
+          );
+          const r2ndPoly = getGeodesicCirclePolygon(
+            targetCoord.lng,
+            targetCoord.lat,
+            Math.min(strikeRadii.thermal2nd, curThermalWaveRadius),
+            72
+          );
+          const r3rdPoly = getGeodesicCirclePolygon(
+            targetCoord.lng,
+            targetCoord.lat,
+            Math.min(strikeRadii.thermal3rd, curThermalWaveRadius),
+            72
+          );
+
           activeLayers.push(
-            new ScatterplotLayer({
+            new PolygonLayer({
               id: `thermal-1st-layer-${strId}`,
-              data: [{ position: centerPoint }],
-              getPosition: (d: any) => d.position,
-              getFillColor: [253, 224, 71, Math.floor(35 * strikeThermalProgress)], 
-              getRadius: () => Math.min(strikeRadii.thermal1st, curThermalWaveRadius),
+              data: [{ contour: r1stPoly }],
+              getPolygon: (d: any) => d.contour,
+              getFillColor: [253, 224, 71, Math.floor(35 * strikeThermalProgress)],
               stroked: true,
-              getLineColor: [253, 224, 71, Math.floor(100 * strikeThermalProgress)],
+              getLineColor: [253, 224, 71, Math.floor(110 * strikeThermalProgress)],
               getLineWidth: 1,
               lineWidthUnits: 'pixels',
               pickable: false,
               parameters: { depthTest: false }
             }),
-            new ScatterplotLayer({
+            new PolygonLayer({
               id: `thermal-2nd-layer-${strId}`,
-              data: [{ position: centerPoint }],
-              getPosition: (d: any) => d.position,
-              getFillColor: [251, 146, 60, Math.floor(40 * strikeThermalProgress)], 
-              getRadius: () => Math.min(strikeRadii.thermal2nd, curThermalWaveRadius),
+              data: [{ contour: r2ndPoly }],
+              getPolygon: (d: any) => d.contour,
+              getFillColor: [251, 146, 60, Math.floor(40 * strikeThermalProgress)],
               stroked: true,
-              getLineColor: [251, 146, 60, Math.floor(120 * strikeThermalProgress)],
+              getLineColor: [251, 146, 60, Math.floor(125 * strikeThermalProgress)],
               getLineWidth: 1,
               lineWidthUnits: 'pixels',
               pickable: false,
               parameters: { depthTest: false }
             }),
-            new ScatterplotLayer({
+            new PolygonLayer({
               id: `thermal-3rd-layer-${strId}`,
-              data: [{ position: centerPoint }],
-              getPosition: (d: any) => d.position,
-              getFillColor: [249, 115, 22, Math.floor(45 * strikeThermalProgress)], 
-              getRadius: () => Math.min(strikeRadii.thermal3rd, curThermalWaveRadius),
+              data: [{ contour: r3rdPoly }],
+              getPolygon: (d: any) => d.contour,
+              getFillColor: [249, 115, 22, Math.floor(45 * strikeThermalProgress)],
               stroked: true,
               getLineColor: [249, 115, 22, Math.floor(150 * strikeThermalProgress)],
               getLineWidth: 1.5,
@@ -1042,16 +1203,34 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           );
         }
 
-        // Pressure Blast Waves
+        // Pressure Blast Waves — Polygones géodésiques exacts
         const curBlastWaveRadius = strikeBlastProgress * strikeRadii.lightBlast;
         if (curBlastWaveRadius > 0) {
+          const lightPoly = getGeodesicCirclePolygon(
+            targetCoord.lng,
+            targetCoord.lat,
+            Math.min(strikeRadii.lightBlast, curBlastWaveRadius),
+            72
+          );
+          const modPoly = getGeodesicCirclePolygon(
+            targetCoord.lng,
+            targetCoord.lat,
+            Math.min(strikeRadii.moderateBlast, curBlastWaveRadius),
+            72
+          );
+          const heavyPoly = getGeodesicCirclePolygon(
+            targetCoord.lng,
+            targetCoord.lat,
+            Math.min(strikeRadii.heavyBlast, curBlastWaveRadius),
+            72
+          );
+
           activeLayers.push(
-            new ScatterplotLayer({
+            new PolygonLayer({
               id: `light-blast-layer-${strId}`,
-              data: [{ position: centerPoint }],
-              getPosition: (d: any) => d.position,
-              getFillColor: [156, 163, 175, 40], 
-              getRadius: () => Math.min(strikeRadii.lightBlast, curBlastWaveRadius),
+              data: [{ contour: lightPoly }],
+              getPolygon: (d: any) => d.contour,
+              getFillColor: [156, 163, 175, 40],
               stroked: true,
               getLineColor: [156, 163, 175, 120],
               getLineWidth: 1,
@@ -1059,12 +1238,11 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
               pickable: false,
               parameters: { depthTest: false }
             }),
-            new ScatterplotLayer({
+            new PolygonLayer({
               id: `moderate-blast-layer-${strId}`,
-              data: [{ position: centerPoint }],
-              getPosition: (d: any) => d.position,
-              getFillColor: [107, 114, 128, 70], 
-              getRadius: () => Math.min(strikeRadii.moderateBlast, curBlastWaveRadius),
+              data: [{ contour: modPoly }],
+              getPolygon: (d: any) => d.contour,
+              getFillColor: [107, 114, 128, 70],
               stroked: true,
               getLineColor: [75, 85, 99, 180],
               getLineWidth: 1.5,
@@ -1072,12 +1250,11 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
               pickable: false,
               parameters: { depthTest: false }
             }),
-            new ScatterplotLayer({
+            new PolygonLayer({
               id: `heavy-blast-layer-${strId}`,
-              data: [{ position: centerPoint }],
-              getPosition: (d: any) => d.position,
-              getFillColor: [239, 68, 68, 80], 
-              getRadius: () => Math.min(strikeRadii.heavyBlast, curBlastWaveRadius),
+              data: [{ contour: heavyPoly }],
+              getPolygon: (d: any) => d.contour,
+              getFillColor: [239, 68, 68, 80],
               stroked: true,
               getLineColor: [185, 28, 28, 180],
               getLineWidth: 2,
@@ -1115,16 +1292,16 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           );
         }
 
-        // Fireball Gas Dome
+        // Fireball Gas Dome (Polygone géodésique exact)
         const curFireballRadius = strikeFireball.currentRadius;
         if (strikeDetonationMs >= 80 && curFireballRadius > 0) {
+          const fbPoly = getGeodesicCirclePolygon(targetCoord.lng, targetCoord.lat, curFireballRadius, 64);
           activeLayers.push(
-            new ScatterplotLayer({
+            new PolygonLayer({
               id: `fireball-layer-${strId}`,
-              data: [{ position: centerPoint }],
-              getPosition: (d: any) => d.position,
+              data: [{ contour: fbPoly }],
+              getPolygon: (d: any) => d.contour,
               getFillColor: strikeFireball.color,
-              getRadius: () => curFireballRadius,
               stroked: true,
               getLineColor: [234, 179, 8, Math.floor(220 * strikeFireball.progress)],
               getLineWidth: 2,
@@ -1135,8 +1312,14 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           );
         }
 
-        // Fireball Debris Scattering
-        const strikeDebrisData = calculateActiveDebris(targetCoord, strikeDetonationMs, fireballDebrisParticles, strikeRadii.fireball);
+        // Fireball Debris Scattering (géodésique, immunisé contre cos(lat) polaire)
+        const strikeDebrisData = calculateActiveDebris(
+          targetCoord,
+          strikeDetonationMs,
+          fireballDebrisParticles,
+          strikeRadii.fireball,
+          strikePlasmaIntensity
+        );
         if (strikeDebrisData.length > 0) {
           activeLayers.push(
             new ScatterplotLayer({
@@ -1145,6 +1328,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
               getPosition: (d: any) => d.position,
               getFillColor: (d: any) => d.color,
               getRadius: (d: any) => d.size,
+              radiusUnits: 'pixels',
               radiusMinPixels: 1.5,
               radiusMaxPixels: 6,
               stroked: false,
@@ -1154,18 +1338,18 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           );
         }
 
-        // Surface Crater
+        // Surface Crater (Polygone géodésique exact)
         if (environmentParams.explosionType === 'surface' && strikeRadii.crater > 0 && strikeDetonationMs >= 80) {
           const craterProgress = Math.max(0, Math.min(1, (strikeDetonationMs - 80) / 720));
           const currentCraterRadius = strikeRadii.crater * craterProgress;
           if (currentCraterRadius > 0) {
+            const craterPoly = getGeodesicCirclePolygon(targetCoord.lng, targetCoord.lat, currentCraterRadius, 56);
             activeLayers.push(
-              new ScatterplotLayer({
+              new PolygonLayer({
                 id: `crater-layer-${strId}`,
-                data: [{ position: centerPoint }],
-                getPosition: (d: any) => d.position,
-                getFillColor: [25, 25, 25, 215], 
-                getRadius: () => currentCraterRadius,
+                data: [{ contour: craterPoly }],
+                getPolygon: (d: any) => d.contour,
+                getFillColor: [25, 25, 25, 215],
                 stroked: true,
                 getLineColor: [0, 0, 0, 240],
                 getLineWidth: 3,
@@ -1177,7 +1361,7 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           }
         }
 
-        // Mushroom Cloud point-cloud (GPU-instanced particles)
+        // Mushroom Cloud point-cloud (géodésique + plafond visuel)
         const strikeMushroomCloudData = calculateMushroomCloud(targetCoord, environmentParams, strikeYield, strikeDetonationMs);
         if (environmentParams?.showMushroomCloud && strikeMushroomCloudData.length > 0) {
           activeLayers.push(
@@ -1195,30 +1379,46 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           );
         }
 
-        // Maritime flood & tsunami progress waves
-        if (environmentParams?.maritimeImpact && tsunamiMetrics?.isEligible && strikeDetonationMs >= 2000) {
+        // Maritime flood & tsunami progress waves — évalués individuellement par cible !
+        const strikeIsWater = strId === 'current-target'
+          ? Boolean(targetDetails?.isWater)
+          : !isCoordinateOnLand(targetCoord.lat, targetCoord.lng);
+        const strikeShoreKm = strId === 'current-target'
+          ? (environmentParams.shoreDistanceKm ?? 5)
+          : (strikeIsWater ? 0 : estimateClosestSeaDistanceKm(targetCoord.lat, targetCoord.lng).distanceKm);
+        const strikeTsunami = strId === 'current-target'
+          ? tsunamiMetrics
+          : calculateTsunamiMetrics(
+              strikeYield,
+              environmentParams.oceanDepthM ?? 2000,
+              strikeShoreKm,
+              environmentParams.beachSlopePct ?? 2.0,
+              environmentParams.terrainDamping ?? 1.5,
+              strikeIsWater,
+              environmentParams.coastalDepthM ?? 8,
+              environmentParams.manningN ?? 0.050
+            );
+
+        if (environmentParams?.maritimeImpact && strikeTsunami?.isEligible && strikeDetonationMs >= 2000) {
           const oceanDepthM = environmentParams.oceanDepthM ?? 2000;
-          const shoreDistanceKm = environmentParams.shoreDistanceKm ?? 5;
-          const coastalFloodingRadius = tsunamiMetrics.recommendedFloodRadiusM;
+          const coastalFloodingRadius = strikeTsunami.recommendedFloodRadiusM;
           const maritimeProgress = Math.max(0, Math.min(1, (strikeDetonationMs - 2000) / 4000));
           const currentFloodRadius = coastalFloodingRadius * maritimeProgress;
 
           if (currentFloodRadius > 0) {
+            const floodPoly = getGeodesicCirclePolygon(targetCoord.lng, targetCoord.lat, currentFloodRadius, 72);
+            const floodRingPts = getGeodesicRingPath(targetCoord.lng, targetCoord.lat, currentFloodRadius, 90);
             const dashSegments = [];
-            const numSegPoints = 180;
-            for (let i = 0; i < numSegPoints; i += 2) {
-              const p1 = getDestination(targetCoord.lng, targetCoord.lat, currentFloodRadius / 1000, i * 2);
-              const p2 = getDestination(targetCoord.lng, targetCoord.lat, currentFloodRadius / 1000, (i + 1) * 2);
-              dashSegments.push({ path: [p1, p2] });
+            for (let i = 0; i < floodRingPts.length - 1; i += 2) {
+              dashSegments.push({ path: [floodRingPts[i], floodRingPts[i + 1]] });
             }
 
             activeLayers.push(
-              new ScatterplotLayer({
+              new PolygonLayer({
                 id: `maritime-flood-area-${strId}`,
-                data: [{ position: centerPoint }],
-                getPosition: (d: any) => d.position,
-                getFillColor: [56, 189, 248, Math.floor(35 * maritimeProgress)], 
-                getRadius: () => currentFloodRadius,
+                data: [{ contour: floodPoly }],
+                getPolygon: (d: any) => d.contour,
+                getFillColor: [56, 189, 248, Math.floor(35 * maritimeProgress)],
                 stroked: false,
                 pickable: false,
                 parameters: { depthTest: false }
@@ -1237,45 +1437,41 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           }
 
           // Anneaux de vagues concentriques animés (Seulement si sur l'eau)
-          if (targetDetails?.isWater) {
+          if (strikeIsWater) {
              const numRings = 4;
              for (let i = 0; i < numRings; i++) {
                 const timeActiveMs = Math.max(0, (strikeDetonationMs - 2000) - i * 600);
                 if (timeActiveMs <= 0) continue;
                 
-                // Vitesse proportionnelle à sqrt(profondeur) * 9.8
                 const waveSpeedDeep = Math.sqrt(oceanDepthM * 9.8);
-                // Vitesse visuelle (accélérée par rapport au temps de détonation)
                 const simulatedSeconds = (timeActiveMs / 1000) * 15; 
                 let radM = waveSpeedDeep * simulatedSeconds;
                 
-                // Effet de shoaling: la vague ralentit à l'approche de la côte
-                const shoreDistM = shoreDistanceKm * 1000;
+                const shoreDistM = strikeShoreKm * 1000;
                 if (radM > shoreDistM * 0.6) {
                     const excess = radM - shoreDistM * 0.6;
-                    // Ralentissement brutal en eau peu profonde
                     radM = shoreDistM * 0.6 + excess * 0.25; 
                 }
 
-                // Opacité décroissante avec le temps et l'expansion
                 const opacityProgress = Math.min(1, timeActiveMs / 6000);
                 const ringOpacity = Math.max(0, Math.floor(255 * (1 - opacityProgress) * (1 - i/numRings)));
                 
                 if (ringOpacity > 0 && radM > 0) {
-                     activeLayers.push(
-                        new ScatterplotLayer({
-                          id: `tsunami-ring-${strId}-${i}`,
-                          data: [{ position: centerPoint }],
-                          getPosition: (d: any) => d.position,
-                          getFillColor: [0, 0, 0, 0], // transparent
-                          getRadius: () => radM,
-                          stroked: true,
-                          getLineColor: [125, 211, 252, ringOpacity],
-                          lineWidthMinPixels: Math.max(1, 3 - i),
-                          pickable: false,
-                          parameters: { depthTest: false }
-                        })
-                     );
+                     const ringPath = getGeodesicRingPath(targetCoord.lng, targetCoord.lat, radM, 64);
+                     if (ringPath.length > 2) {
+                       activeLayers.push(
+                          new PathLayer({
+                            id: `tsunami-ring-${strId}-${i}`,
+                            data: [{ path: ringPath }],
+                            getPath: (d: any) => d.path,
+                            getColor: [125, 211, 252, ringOpacity],
+                            getWidth: Math.max(1, 3 - i),
+                            widthUnits: 'pixels',
+                            pickable: false,
+                            parameters: { depthTest: false }
+                          })
+                       );
+                     }
                 }
              }
           }
@@ -1289,8 +1485,8 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           data: [{ position: centerPoint }],
           getPosition: (d: any) => d.position,
           getFillColor: strikeIsDetonated ? [255, 255, 255, 255] : [239, 68, 68, 255],
-          getRadius: () => 100, 
-          radiusMinPixels: 4,
+          getRadius: 5,
+          radiusUnits: 'pixels',
           stroked: true,
           getLineColor: strikeIsDetonated ? [0, 0, 0, 255] : [255, 255, 255, 255],
           lineWidthMinPixels: 2,
@@ -1307,8 +1503,8 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           data: [{ position: [origin.lng, origin.lat] }],
           getPosition: (d: any) => d.position,
           getFillColor: [59, 130, 246, 255], 
-          getRadius: () => 100,
-          radiusMinPixels: 4,
+          getRadius: 5,
+          radiusUnits: 'pixels',
           stroked: true,
           getLineColor: [255, 255, 255, 255],
           lineWidthMinPixels: 2,
@@ -1332,13 +1528,17 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
     radii,
     effectiveYield,
     targetDetails,
+    tsunamiMetrics,
     fireballProgress,
     fireballPulsation,
     fireballColor,
     blastProgress,
     thermalProgress,
     fireballDebrisParticles,
-    strikeBallisticStates
+    strikeBallisticStates,
+    isOffline,
+    hasTileError,
+    mapMode
   ]);
 
   return (
@@ -1423,7 +1623,10 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
           transformRequest={transformRequestCallback}
           reuseMaps
           attributionControl={true}
-          onLoad={() => setMapErrorMsg(null)}
+          onLoad={() => {
+            setMapErrorMsg(null);
+            setHasTileError(false);
+          }}
           onError={(e) => {
             const msg = (e as any)?.error?.message || '';
             console.warn('[MapLibre Info] Notification du moteur cartographique:', e);
@@ -1435,7 +1638,12 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
               return;
             }
             if (msg && !msg.toLowerCase().includes('abort')) {
-              setMapErrorMsg("Impossible de charger certaines tuiles cartographiques. Vérifiez votre connexion réseau.");
+              setHasTileError(true);
+              if (typeof navigator !== 'undefined' && !navigator.onLine) {
+                setMapErrorMsg(null);
+              } else {
+                setMapErrorMsg("Tuiles réseau indisponibles — bascule sur fond vectoriel continental hors-ligne.");
+              }
             }
           }}
         />
@@ -1534,21 +1742,34 @@ export function MapView({ pastStrikes, target, origin, radii, environmentParams,
         </div>
       </div>
 
-      {/* Map Tile / Worker Alert Banner if error occurs */}
-      {mapErrorMsg && (
-        <div role="alert" className="absolute top-[4.75rem] left-3 right-3 md:left-4 md:right-auto md:max-w-md z-[95] bg-red-950/95 border border-red-800 text-red-200 px-3 py-2 rounded-lg text-xs flex items-center justify-between gap-2 shadow-xl backdrop-blur-md">
+      {/* Mode hors-ligne ou alerte tuiles discrète (non bloquante) */}
+      {(isOffline || mapErrorMsg) && (
+        <div
+          role={isOffline ? 'status' : 'alert'}
+          className={`absolute top-[4.75rem] left-3 right-3 md:left-4 md:right-auto md:max-w-md z-[95] px-3 py-2 rounded-lg text-xs flex items-center justify-between gap-2 shadow-xl backdrop-blur-md border ${
+            isOffline
+              ? 'bg-zinc-900/90 border-sky-700/60 text-sky-200'
+              : 'bg-amber-950/90 border-amber-800/70 text-amber-200'
+          }`}
+        >
           <div className="flex items-center gap-2 min-w-0">
-            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-            <span className="truncate">{mapErrorMsg}</span>
+            <AlertCircle className={`w-4 h-4 shrink-0 ${isOffline ? 'text-sky-400' : 'text-amber-400'}`} />
+            <span className="truncate">
+              {isOffline
+                ? 'Mode hors-ligne actif — fond vectoriel continental & calcul complet disponibles.'
+                : mapErrorMsg}
+            </span>
           </div>
-          <button
-            type="button"
-            onClick={() => setMapErrorMsg(null)}
-            aria-label="Fermer l'alerte cartographique"
-            className="min-h-8 min-w-8 flex items-center justify-center text-red-300 hover:text-white shrink-0 cursor-pointer"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
+          {mapErrorMsg && (
+            <button
+              type="button"
+              onClick={() => setMapErrorMsg(null)}
+              aria-label="Fermer la notification cartographique"
+              className="min-h-8 min-w-8 flex items-center justify-center text-zinc-300 hover:text-white shrink-0 cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
       )}
 

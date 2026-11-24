@@ -1,19 +1,187 @@
-import { BlastRadii, WeaponConfig, DeliveryVector, DeliveryType, CasualtyReport, CasualtyDistancePoint, StrikeBallisticStatus, LaunchParams } from "../types";
+import { BlastRadii, WeaponConfig, DeliveryVector, DeliveryType, CasualtyReport, CasualtyDistancePoint, StrikeBallisticStatus, LaunchParams, KineticImpactSummary } from "../types";
 import { AutomaticGeoData } from "./geoDataFetcher";
+
+/**
+ * Plafonds numériques et visuels officiels pour prévenir tout débordement
+ * lorsque des valeurs extrêmes sont saisies (puissance, vitesse, apogée, rayon WebGL).
+ */
+export const SIMULATION_CEILINGS = {
+    MIN_YIELD_KT: 0.01,
+    MAX_YIELD_KT: 10_000_000_000_000, // 10^13 kt (10^10 Mt)
+    MIN_SPEED_KMH: 100,
+    MAX_SPEED_KMH: 500_000,
+    MIN_APOGEE_KM: 0,
+    MAX_APOGEE_KM: 50_000,
+    MIN_RANGE_KM: 10,
+    MAX_RANGE_KM: 99_999,
+    MAX_VISUAL_RADIUS_M: 19_950_000, // Demi-circonférence terrestre (~20 015 km)
+    MAX_VISUAL_APOGEE_KM: 3_500,
+    MIN_VISUAL_FLIGHT_MS: 1_200,
+    MAX_VISUAL_FLIGHT_MS: 12_000,
+} as const;
+
+export const clampYieldKt = (yieldKt: number): number => {
+    if (!Number.isFinite(yieldKt)) return SIMULATION_CEILINGS.MIN_YIELD_KT;
+    return Math.min(SIMULATION_CEILINGS.MAX_YIELD_KT, Math.max(SIMULATION_CEILINGS.MIN_YIELD_KT, yieldKt));
+};
+
+export const clampSpeedKmh = (speedKmh: number): number => {
+    if (!Number.isFinite(speedKmh)) return SIMULATION_CEILINGS.MIN_SPEED_KMH;
+    return Math.min(SIMULATION_CEILINGS.MAX_SPEED_KMH, Math.max(SIMULATION_CEILINGS.MIN_SPEED_KMH, speedKmh));
+};
+
+export const clampApogeeKm = (apogeeKm: number): number => {
+    if (!Number.isFinite(apogeeKm)) return SIMULATION_CEILINGS.MIN_APOGEE_KM;
+    return Math.min(SIMULATION_CEILINGS.MAX_APOGEE_KM, Math.max(SIMULATION_CEILINGS.MIN_APOGEE_KM, apogeeKm));
+};
+
+export const clampRangeKm = (rangeKm: number): number => {
+    if (!Number.isFinite(rangeKm)) return SIMULATION_CEILINGS.MIN_RANGE_KM;
+    return Math.min(SIMULATION_CEILINGS.MAX_RANGE_KM, Math.max(SIMULATION_CEILINGS.MIN_RANGE_KM, rangeKm));
+};
+
+export const clampVisualRadiusM = (radiusMeters: number): number => {
+    if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) return 0;
+    return Math.min(SIMULATION_CEILINGS.MAX_VISUAL_RADIUS_M, radiusMeters);
+};
+
+/**
+ * Compresse logarithmiquement les très hauts apogées (> 1 500 km) vers un plafond visuel
+ * WebGL (3 500 km) afin que la trajectoire 3D reste toujours lisible dans le frustum caméra.
+ */
+export const computeVisualApogeeKm = (apogeeKm: number): number => {
+    const safeApogee = clampApogeeKm(apogeeKm);
+    if (safeApogee <= 1500) return safeApogee;
+    const span = SIMULATION_CEILINGS.MAX_VISUAL_APOGEE_KM - 1500;
+    const norm = Math.log10(1 + (safeApogee - 1500) / 500) / Math.log10(1 + (SIMULATION_CEILINGS.MAX_APOGEE_KM - 1500) / 500);
+    return parseFloat((1500 + span * Math.min(1, Math.max(0, norm))).toFixed(2));
+};
+
+const EARTH_RADIUS_KM = 6371;
+const MAX_MERCATOR_LAT = 85.0511;
+
+/**
+ * Calcule le point d'arrivée géodésique sur sphère (sans singularité polaire 1/cos(lat)).
+ */
+export const getGeodesicDestination = (
+    lng: number,
+    lat: number,
+    distanceKm: number,
+    bearingDeg: number
+): [number, number] => {
+    const d = Math.max(0, distanceKm) / EARTH_RADIUS_KM;
+    const brng = (bearingDeg * Math.PI) / 180;
+    const lat1 = (Math.max(-89.999, Math.min(89.999, lat)) * Math.PI) / 180;
+    const lon1 = (lng * Math.PI) / 180;
+
+    const lat2 = Math.asin(
+        Math.max(-1, Math.min(1, Math.sin(lat1) * Math.cos(d) + Math.cos(lat1) * Math.sin(d) * Math.cos(brng)))
+    );
+    const lon2 = lon1 + Math.atan2(
+        Math.sin(brng) * Math.sin(d) * Math.cos(lat1),
+        Math.cos(d) - Math.sin(lat1) * Math.sin(lat2)
+    );
+
+    let destLng = ((lon2 * 180) / Math.PI + 540) % 360 - 180;
+    const destLat = Math.max(-89.999, Math.min(89.999, (lat2 * 180) / Math.PI));
+    if (Object.is(destLng, -180)) destLng = 180;
+    return [destLng, destLat];
+};
+
+/**
+ * Génère un polygone géodésique exact sur la sphère terrestre, immunisé contre la distorsion
+ * Web Mercator 1/cos(lat) des latitudes élevées et gérant les disques englobant un pôle ou ±180°.
+ */
+export const getGeodesicCirclePolygon = (
+    lng: number,
+    lat: number,
+    radiusMeters: number,
+    steps: number = 72
+): [number, number][] => {
+    const safeRadiusM = clampVisualRadiusM(radiusMeters);
+    if (safeRadiusM <= 0) return [];
+
+    const angularRad = Math.min(Math.PI - 0.002, safeRadiusM / (EARTH_RADIUS_KM * 1000));
+    const latRad = (Math.max(-89.999, Math.min(89.999, lat)) * Math.PI) / 180;
+    const lonRad = (lng * Math.PI) / 180;
+
+    const enclosesNorthPole = latRad + angularRad > Math.PI / 2 - 1e-4;
+    const enclosesSouthPole = latRad - angularRad < -Math.PI / 2 + 1e-4;
+
+    if (enclosesNorthPole && enclosesSouthPole) {
+        return [
+            [-180, -MAX_MERCATOR_LAT],
+            [180, -MAX_MERCATOR_LAT],
+            [180, MAX_MERCATOR_LAT],
+            [-180, MAX_MERCATOR_LAT],
+            [-180, -MAX_MERCATOR_LAT],
+        ];
+    }
+
+    // Disque englobant un pôle : trace la frontière latitudinale continue de -180° à +180°
+    if (enclosesNorthPole || enclosesSouthPole) {
+        const capLat = enclosesNorthPole ? MAX_MERCATOR_LAT : -MAX_MERCATOR_LAT;
+        const effectiveLatRad = enclosesSouthPole ? -latRad : latRad;
+        const sinLat1 = Math.sin(effectiveLatRad);
+        const cosLat1 = Math.cos(effectiveLatRad);
+        const cosD = Math.cos(angularRad);
+        const ring: [number, number][] = [];
+
+        const lonSamples = Math.max(72, steps);
+        for (let i = 0; i <= lonSamples; i++) {
+            const sampleLng = -180 + (360 * i) / lonSamples;
+            const dLon = (sampleLng * Math.PI) / 180 - lonRad;
+            const B = cosLat1 * Math.cos(dLon);
+            const R_ab = Math.hypot(sinLat1, B);
+            const phi = Math.atan2(B, sinLat1);
+            const ratio = Math.max(-1, Math.min(1, cosD / (R_ab || 1e-12)));
+            const boundaryLatRad = Math.asin(ratio) - phi;
+            const boundaryLatDeg = ((enclosesSouthPole ? -1 : 1) * boundaryLatRad * 180) / Math.PI;
+            ring.push([sampleLng, Math.max(-MAX_MERCATOR_LAT, Math.min(MAX_MERCATOR_LAT, boundaryLatDeg))]);
+        }
+        ring.push([180, capLat]);
+        ring.push([-180, capLat]);
+        ring.push(ring[0]);
+        return ring;
+    }
+
+    // Cas standard : déroulage continu des longitudes autour de `lng` sans saut ±180°
+    const points: [number, number][] = [];
+    let prevLng = lng;
+    for (let i = 0; i < steps; i++) {
+        const angle = (i * 360) / steps;
+        const [rawLon, rawLat] = getGeodesicDestination(lng, lat, safeRadiusM / 1000, angle);
+        let unwrappedLon = rawLon;
+        while (unwrappedLon - prevLng > 180) unwrappedLon -= 360;
+        while (unwrappedLon - prevLng < -180) unwrappedLon += 360;
+        prevLng = unwrappedLon;
+        points.push([unwrappedLon, Math.max(-MAX_MERCATOR_LAT, Math.min(MAX_MERCATOR_LAT, rawLat))]);
+    }
+    if (points.length > 0) {
+        points.push([points[0][0], points[0][1]]);
+    }
+    return points;
+};
 
 /**
  * Enhanced scale laws based on "The Effects of Nuclear Weapons" (Glasstone & Dolan, 1977).
  * Evaluates blast wave circles using overpressures (psi) and thermal radiation.
  * It also computes craters based on Dolan and surface mechanical models.
  */
-export const calculateBlastRadii = (yieldKt: number, explosionType: 'airburst' | 'surface', manningN: number = 0.050): BlastRadii => {
-    const safeYield = Math.max(0.01, Number.isFinite(yieldKt) ? yieldKt : 0.01);
+export const calculateBlastRadii = (
+    yieldKt: number,
+    explosionType: 'airburst' | 'surface',
+    manningN: number = 0.050,
+    craterMultiplier: number = 1
+): BlastRadii => {
+    const safeYield = clampYieldKt(yieldKt);
+    const safeCraterMult = Number.isFinite(craterMultiplier) ? Math.max(1, Math.min(3.5, craterMultiplier)) : 1;
     // 1. Crater (only created in surface burst)
     // Dolan empirical model: R_crater = 45 * Y^(0.33) in m. We use manning n as soil hardness proxy.
     // Higher n (rougher terrain/rock) -> smaller crater. Lower n (smooth plains/soft soil) -> larger crater.
     const soilHardnessFactor = Math.pow(0.050 / Math.max(0.010, manningN), 0.3);
     const craterR_m = explosionType === 'surface' 
-        ? 45 * Math.pow(safeYield, 0.33) * soilHardnessFactor
+        ? 45 * Math.pow(safeYield, 0.33) * soilHardnessFactor * safeCraterMult
         : 0;
 
     // 2. Fireball radius (meters)
@@ -614,11 +782,12 @@ export const calculateCasualtiesByDistance = (
  * Calculates Richer equivalent energy scale
  * Energy in Joules: 1 kt TNT = 4.184 x 10^12 Joules
  */
-export const calculateRichterScale = (yieldKt: number): number => {
-    const safeYield = Math.max(0.01, Number.isFinite(yieldKt) ? yieldKt : 0.01);
+export const calculateRichterScale = (yieldKt: number, seismicBoostMag: number = 0): number => {
+    const safeYield = clampYieldKt(yieldKt);
     const energyJoules = safeYield * 4.184e12;
     // Gutenberg-Richter log relationship: Mag = (2/3) * log10(E) - 3.2
-    const mag = (2 / 3) * Math.log10(energyJoules) - 3.2;
+    const safeBoost = Number.isFinite(seismicBoostMag) ? Math.max(0, Math.min(2.5, seismicBoostMag)) : 0;
+    const mag = (2 / 3) * Math.log10(energyJoules) - 3.2 + safeBoost;
     return parseFloat(mag.toFixed(2));
 };
 
@@ -652,15 +821,19 @@ export const resolveVectorFlightProfile = (launchParams: LaunchParams): Resolved
     const baseSpeed = launchParams.customSpeedKmh !== undefined && launchParams.customSpeedKmh > 0
         ? launchParams.customSpeedKmh
         : defaults.speedKmh;
-    const speedKmh = trajectoryType === 'depressed' ? Math.round(baseSpeed * 1.33) : baseSpeed;
+    const speedKmh = clampSpeedKmh(trajectoryType === 'depressed' ? Math.round(baseSpeed * 1.33) : baseSpeed);
 
-    const maxRangeKm = launchParams.customRangeKm !== undefined && launchParams.customRangeKm > 0
-        ? launchParams.customRangeKm
-        : defaults.maxRangeKm;
+    const maxRangeKm = clampRangeKm(
+        launchParams.customRangeKm !== undefined && launchParams.customRangeKm > 0
+            ? launchParams.customRangeKm
+            : defaults.maxRangeKm
+    );
 
-    const altitudeKm = launchParams.altitudeKm !== undefined && launchParams.altitudeKm >= 0
-        ? launchParams.altitudeKm
-        : defaults.altitudeKm;
+    const altitudeKm = clampApogeeKm(
+        launchParams.altitudeKm !== undefined && launchParams.altitudeKm >= 0
+            ? launchParams.altitudeKm
+            : defaults.altitudeKm
+    );
 
     return {
         vectorId,
@@ -669,6 +842,104 @@ export const resolveVectorFlightProfile = (launchParams: LaunchParams): Resolved
         altitudeKm,
         trajectoryType,
         colorHex: defaults.colorHex
+    };
+};
+
+/**
+ * Calcule la longueur curviligne 3D (km) de la trajectoire parabolique z(t) = 4*H*t*(1-t)
+ * en tenant compte de la distance au sol et de l'apogée.
+ */
+export const computeBallisticArcLengthKm = (surfaceDistKm: number, apogeeKm: number): number => {
+    const safeDist = Math.max(0, Number.isFinite(surfaceDistKm) ? surfaceDistKm : 0);
+    const safeH = clampApogeeKm(apogeeKm);
+    if (safeH <= 0.05) return safeDist;
+    const steps = 24;
+    const ds = safeDist / steps;
+    let total = 0;
+    let prevZ = 0;
+    for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        const z = 4 * safeH * t * (1 - t);
+        total += Math.hypot(ds, z - prevZ);
+        prevZ = z;
+    }
+    return parseFloat(total.toFixed(2));
+};
+
+export interface BallisticImpactCouplingInput {
+    baseYieldKt: number;
+    speedKmh: number;
+    apogeeKm: number;
+    vectorId?: DeliveryType;
+    explosionType: 'airburst' | 'surface';
+    surfaceDistKm: number;
+}
+
+export interface BallisticImpactCouplingResult extends KineticImpactSummary {
+    effectiveTotalYieldKt: number;
+}
+
+const VECTOR_WARHEAD_MASS_KG: Record<string, number> = {
+    icbm: 1200,
+    slbm: 1400,
+    hypothetical: 1800,
+    bomber: 2400,
+    cruise: 1000,
+    houthi: 600,
+    custom: 1200,
+};
+
+/**
+ * Modélise le couplage physique entre vitesse du vecteur, apogée (accélération gravitationnelle
+ * de rentrée) et énergie à l'impact : énergie cinétique E = ½ m v², angle de rentrée,
+ * intensité de plasma de rentrée hypersonique, amplification de cratère et onde sismique.
+ */
+export const computeBallisticImpactCoupling = (
+    input: BallisticImpactCouplingInput
+): BallisticImpactCouplingResult => {
+    const safeYield = clampYieldKt(input.baseYieldKt);
+    const safeSpeedKmh = clampSpeedKmh(input.speedKmh);
+    const safeApogeeKm = clampApogeeKm(input.apogeeKm);
+    const safeDistKm = Math.max(0, Number.isFinite(input.surfaceDistKm) ? input.surfaceDistKm : 0);
+
+    const vCruiseMps = safeSpeedKmh / 3.6;
+    const GM = 3.986004418e14; // m^3 / s^2
+    const rEarthM = 6_371_000;
+    const apogeeM = safeApogeeKm * 1000;
+    const deltaPhi = apogeeM > 0 ? 2 * GM * (1 / rEarthM - 1 / (rEarthM + apogeeM)) : 0;
+
+    // Les vecteurs aérobies de croisière subsoniques conservent une traînée atmosphérique importante
+    const isAirBreathing = input.vectorId === 'cruise' || input.vectorId === 'bomber';
+    const gravEfficiency = isAirBreathing && safeApogeeKm <= 50 ? 0.15 : 0.92;
+    const vImpactMps = Math.sqrt(vCruiseMps * vCruiseMps + deltaPhi * gravEfficiency);
+    const impactVelocityMach = parseFloat((vImpactMps / 340.29).toFixed(2));
+
+    const baseMassKg = VECTOR_WARHEAD_MASS_KG[input.vectorId || 'icbm'] ?? 1200;
+    const massKg = Math.min(8000, baseMassKg + 250 * Math.max(0, Math.log10(Math.max(1, safeYield))));
+    const kineticYieldKt = parseFloat(((0.5 * massKg * vImpactMps * vImpactMps) / 4.184e12).toFixed(4));
+
+    const rawAngleDeg = safeDistKm > 0
+        ? (Math.atan2(4 * safeApogeeKm, Math.max(1, safeDistKm)) * 180) / Math.PI
+        : (safeApogeeKm > 50 ? 75 : 15);
+    const reentryAngleDeg = parseFloat(Math.min(89, Math.max(5, rawAngleDeg)).toFixed(1));
+
+    const plasmaIntensity = parseFloat(Math.min(1, Math.max(0, (impactVelocityMach - 1) / 80)).toFixed(3));
+    const craterMultiplier = input.explosionType === 'surface'
+        ? parseFloat((1 + Math.min(2.5, 0.35 * Math.sin((reentryAngleDeg * Math.PI) / 180) * (impactVelocityMach / 20))).toFixed(3))
+        : 1;
+    const seismicBoostMag = parseFloat(
+        Math.min(2.2, 0.35 * Math.log10(1 + kineticYieldKt + impactVelocityMach * 0.05)).toFixed(3)
+    );
+    const effectiveTotalYieldKt = clampYieldKt(safeYield + kineticYieldKt);
+
+    return {
+        kineticYieldKt,
+        reentryAngleDeg,
+        plasmaIntensity,
+        impactVelocityMach,
+        craterMultiplier,
+        seismicBoostMag,
+        effectiveTotalYieldKt,
     };
 };
 
@@ -764,38 +1035,48 @@ export interface StrikeTimingInput {
 export interface ComputedStrikeTiming {
     id: string;
     distanceKm: number;
+    arcDistanceKm: number;
     flightDurationMin: number;
     impactAtMs: number;
+    visualDurationMs: number;
     inRange: boolean;
 }
 
 /**
- * Calcule le calendrier d'impact balistique de chaque cible proportionnellement
- * à sa distance géodésique réelle (Haversine) par rapport à l'origine.
- * Ainsi, à vitesse de vecteur constante, les cibles proches impactent avant les plus lointaines.
+ * Calcule le calendrier d'impact balistique de chaque cible proportionnellement à la longueur
+ * réelle de son arc 3D (sol + apogée) et à la vitesse du vecteur.
+ * La durée d'animation s'adapte dynamiquement entre 1,2 s et 12,0 s selon vitesse & apogée.
  */
 export const computeMultiStrikeTimings = (
     origin: { lng: number; lat: number },
     strikes: StrikeTimingInput[],
     speedKmh: number,
-    maxRangeKm: number
+    maxRangeKm: number,
+    apogeeKm: number = 1200
 ): {
     timings: ComputedStrikeTiming[];
     minImpactAtMs: number;
     maxImpactAtMs: number;
     inRangeCount: number;
+    visualDurationMs: number;
 } => {
     if (strikes.length === 0) {
-        return { timings: [], minImpactAtMs: 0, maxImpactAtMs: 0, inRangeCount: 0 };
+        return { timings: [], minImpactAtMs: 0, maxImpactAtMs: 0, inRangeCount: 0, visualDurationMs: 0 };
     }
+
+    const safeSpeedKmh = clampSpeedKmh(speedKmh);
+    const safeRangeKm = clampRangeKm(maxRangeKm);
+    const safeApogeeKm = clampApogeeKm(apogeeKm);
 
     const raw = strikes.map((strike) => {
         const distanceKm = haversineKm(origin.lat, origin.lng, strike.target.lat, strike.target.lng);
-        const flightDurationMin = flightTimeMin(distanceKm, speedKmh);
-        const inRange = distanceKm <= maxRangeKm;
+        const arcDistanceKm = computeBallisticArcLengthKm(distanceKm, safeApogeeKm);
+        const flightDurationMin = flightTimeMin(arcDistanceKm, safeSpeedKmh);
+        const inRange = distanceKm <= safeRangeKm;
         return {
             id: strike.id,
             distanceKm,
+            arcDistanceKm,
             flightDurationMin,
             inRange,
         };
@@ -803,25 +1084,29 @@ export const computeMultiStrikeTimings = (
 
     const inRangeItems = raw.filter((item) => item.inRange);
     const referenceItems = inRangeItems.length > 0 ? inRangeItems : raw;
-    const maxDistKm = Math.max(0, ...referenceItems.map((item) => item.distanceKm));
-    const maxFlightMin = flightTimeMin(maxDistKm, speedKmh);
+    const maxArcDistKm = Math.max(0, ...referenceItems.map((item) => item.arcDistanceKm));
+    const maxFlightMin = Math.max(0, ...referenceItems.map((item) => item.flightDurationMin));
 
-    // Compression temporelle visuelle cohérente (4 s à 6 s pour le trajet le plus long)
-    const minTime = 5;
-    const maxTime = 600;
-    const ratio = Math.min(Math.max((maxFlightMin - minTime) / (maxTime - minTime), 0), 1);
-    const maxVisualDurationMs = 4000 + ratio * 2000;
+    // Compression logarithmique bornée [1.2 s .. 12.0 s] : réagit nettement à la vitesse et à l'apogée
+    const logNorm = maxFlightMin > 0
+        ? Math.min(1, Math.max(0, Math.log10(1 + maxFlightMin) / Math.log10(1 + 720)))
+        : 0;
+    const maxVisualDurationMs = Math.round(
+        SIMULATION_CEILINGS.MIN_VISUAL_FLIGHT_MS +
+        logNorm * (SIMULATION_CEILINGS.MAX_VISUAL_FLIGHT_MS - SIMULATION_CEILINGS.MIN_VISUAL_FLIGHT_MS)
+    );
 
     const timings: ComputedStrikeTiming[] = raw.map((item) => {
         if (!item.inRange) {
-            return { ...item, impactAtMs: 0 };
+            return { ...item, impactAtMs: 0, visualDurationMs: 0 };
         }
-        const proportionalMs = maxDistKm > 0
-            ? Math.max(250, Math.round((item.distanceKm / maxDistKm) * maxVisualDurationMs))
-            : 250;
+        const proportionalMs = maxArcDistKm > 0
+            ? Math.max(250, Math.round((item.arcDistanceKm / maxArcDistKm) * maxVisualDurationMs))
+            : SIMULATION_CEILINGS.MIN_VISUAL_FLIGHT_MS;
         return {
             ...item,
             impactAtMs: proportionalMs,
+            visualDurationMs: maxVisualDurationMs,
         };
     });
 
@@ -834,6 +1119,7 @@ export const computeMultiStrikeTimings = (
         minImpactAtMs,
         maxImpactAtMs,
         inRangeCount: inRangeItems.length,
+        visualDurationMs: maxVisualDurationMs,
     };
 };
 

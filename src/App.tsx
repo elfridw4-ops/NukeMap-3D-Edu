@@ -8,20 +8,32 @@ import {
   haversineKm,
   getSimulatedTimeSec,
   calculateTsunamiMetrics,
-  calculateCasualtyReport,
   resolveVectorFlightProfile,
   computeMultiStrikeTimings,
   evaluateBallisticClock,
+  clampYieldKt,
+  computeBallisticImpactCoupling,
   ComputedStrikeTiming,
 } from './lib/nuclearMath';
 import { WeaponConfig, LaunchParams, EnvironmentParams, PastStrike, StrikeBallisticStatus } from './types';
-import { fetchAutomaticGeoData, DEFAULT_AUTOMATIC_GEO_DATA, AutomaticGeoData } from './lib/geoDataFetcher';
+import {
+  fetchAutomaticGeoData,
+  DEFAULT_AUTOMATIC_GEO_DATA,
+  AutomaticGeoData,
+  resolveOfflineGeoData,
+} from './lib/geoDataFetcher';
+import {
+  getWorldDemographicDataset,
+  syncWorldPopulationFromApi,
+  WorldDemographicDataset,
+  isCoordinateOnLand,
+} from './data/worldPopulation';
+import { computeCombinedCasualtyReport } from './lib/populationModel';
 import { RotateCcw } from 'lucide-react';
 import { LandingPage } from './components/LandingPage';
 import { usePersistedState } from './lib/hooks';
 import { PWAController } from './components/PWAController';
 import { soundEngine } from './lib/soundEngine';
-import { updateRuntimeSeoMetadata } from './lib/seo';
 
 export default function App() {
   const [currentTab, setCurrentTab] = usePersistedState<'landing' | 'simulator'>('currentTab', 'landing');
@@ -200,6 +212,20 @@ export default function App() {
   };
 
   const [autoGeoData, setAutoGeoData] = useState<AutomaticGeoData>(DEFAULT_AUTOMATIC_GEO_DATA);
+  const [worldDataset, setWorldDataset] = useState<WorldDemographicDataset>(() => getWorldDemographicDataset());
+
+  // Synchronisation de la base démographique mondiale (REST Countries API + cache local hors ligne)
+  useEffect(() => {
+    const controller = new AbortController();
+    syncWorldPopulationFromApi(controller.signal)
+      .then((ds) => {
+        setWorldDataset(ds);
+      })
+      .catch(() => {
+        // Repli silencieux sur le dataset local déjà initialisé
+      });
+    return () => controller.abort();
+  }, []);
 
   const [targetDetails, setTargetDetails] = useState<{
     isWater: boolean;
@@ -226,7 +252,40 @@ export default function App() {
     setTargetDetails(prev => ({ ...prev, loading: true }));
     setAutoGeoData(prev => ({ ...prev, loading: true, error: null }));
 
+    const applyOfflineResolution = () => {
+      const offline = resolveOfflineGeoData(target.lat, target.lng);
+      setTargetDetails({
+        isWater: offline.isWater,
+        name: offline.name,
+        country: offline.country,
+        city: offline.city,
+        detected: true,
+        loading: false,
+      });
+      setAutoGeoData(offline.autoGeoData);
+      setEnvironmentParams((prev) => ({
+        ...prev,
+        terrainDamping: !offline.isWater && offline.autoGeoData.roughnessCoef
+          ? offline.autoGeoData.roughnessCoef
+          : prev.terrainDamping,
+        manningN: offline.autoGeoData.manningN,
+        tropopauseAltitudeKm: offline.autoGeoData.tropopauseKm,
+        windSpeed: offline.autoGeoData.windSpeedKmh,
+        windDirection: offline.autoGeoData.windDirectionDeg,
+        oceanDepthM: offline.autoGeoData.oceanDepthM ?? prev.oceanDepthM,
+        shoreDistanceKm: prev.autoShoreDistance === false
+          ? prev.shoreDistanceKm
+          : (offline.autoGeoData.shoreDistanceKm ?? prev.shoreDistanceKm),
+        beachSlopePct: offline.autoGeoData.beachSlopePct ?? prev.beachSlopePct,
+      }));
+    };
+
     const checkWater = async () => {
+      if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+        applyOfflineResolution();
+        return;
+      }
+
       try {
         const response = await fetch(
           `https://nominatim.openstreetmap.org/reverse?format=json&lat=${target.lat}&lon=${target.lng}&zoom=10&extratags=1&namedetails=1`,
@@ -299,24 +358,19 @@ export default function App() {
         } catch (err: any) {
           if (err?.name === 'AbortError') return;
           console.error("Failed to automatically enrich geodata:", err);
-          setAutoGeoData(prev => ({ ...prev, loading: false, error: "Erreur topo/démographique" }));
+          applyOfflineResolution();
         }
 
       } catch (error: any) {
         if (error.name === 'AbortError') return;
-        console.warn("Failed to check water status:", error);
-        setTargetDetails(prev => ({
-          ...prev,
-          detected: false,
-          loading: false
-        }));
-        setAutoGeoData(prev => ({ ...prev, loading: false }));
+        console.warn("Switching to offline geo resolution:", error);
+        applyOfflineResolution();
       }
     };
 
     const timeoutId = setTimeout(() => {
       checkWater();
-    }, 400);
+    }, 350);
 
     return () => {
       clearTimeout(timeoutId);
@@ -373,23 +427,50 @@ export default function App() {
     }
   };
 
-  const effectiveYield = weapon.id === 'custom' ? customYield : weapon.yieldKt;
+  const baseYield = clampYieldKt(weapon.id === 'custom' ? customYield : weapon.yieldKt);
+  const flightProfile = useMemo(() => resolveVectorFlightProfile(launchParams), [launchParams]);
+
+  // Couplage cinétique vitesse + apogée (E_kin + accélération gravitationnelle de rentrée)
+  const ballisticCoupling = useMemo(() => {
+    if (simulationMode !== 'ballistic' || !origin || !target) return null;
+    const surfaceDistKm = haversineKm(origin.lat, origin.lng, target.lat, target.lng);
+    return computeBallisticImpactCoupling({
+      baseYieldKt: baseYield,
+      speedKmh: flightProfile.speedKmh,
+      apogeeKm: flightProfile.altitudeKm,
+      vectorId: flightProfile.vectorId,
+      explosionType: environmentParams.explosionType,
+      surfaceDistKm,
+    });
+  }, [simulationMode, origin, target, baseYield, flightProfile, environmentParams.explosionType]);
+
+  const effectiveYield = ballisticCoupling ? ballisticCoupling.effectiveTotalYieldKt : baseYield;
 
   // Liste dédupliquée des cibles actives (alignée à 100 % avec les IDs de Map.tsx)
   const activeStrikeTargets = useMemo(() => {
-    const list: Array<{ id: string; target: { lng: number; lat: number }; effectiveYield: number }> = [];
+    const list: Array<{
+      id: string;
+      target: { lng: number; lat: number };
+      effectiveYield: number;
+      weaponType: 'fission' | 'fusion' | 'dirty';
+    }> = [];
     if (target) {
-      list.push({ id: 'current-target', target, effectiveYield });
+      list.push({ id: 'current-target', target, effectiveYield, weaponType: weapon.weaponType });
     }
     if (multiStrikeMode && pastStrikes.length > 0) {
       pastStrikes.forEach((strike) => {
         if (!list.some((s) => s.target.lng === strike.target.lng && s.target.lat === strike.target.lat)) {
-          list.push({ id: strike.id, target: strike.target, effectiveYield: strike.effectiveYield });
+          list.push({
+            id: strike.id,
+            target: strike.target,
+            effectiveYield: clampYieldKt(strike.effectiveYield),
+            weaponType: strike.weaponType || weapon.weaponType,
+          });
         }
       });
     }
     return list;
-  }, [target, effectiveYield, multiStrikeMode, pastStrikes]);
+  }, [target, effectiveYield, weapon.weaponType, multiStrikeMode, pastStrikes]);
 
   // États individuels (progress 0..1 & âge de détonation) calculés à chaque instant de l'horloge balistique
   const strikeBallisticStates = useMemo<Record<string, StrikeBallisticStatus> | undefined>(() => {
@@ -413,13 +494,18 @@ export default function App() {
     };
   }, [launchedTimings, ballisticClockMs]);
 
-  // Aperçu temps réel de la fenêtre de tir et du nombre d'impacts en cours pour la barre latérale
+  // Aperçu temps réel de la fenêtre de tir et de la durée visuelle adaptative (vitesse + apogée)
   const multiStrikeFlightSummary = useMemo(() => {
     if (simulationMode !== 'ballistic' || !origin || activeStrikeTargets.length === 0) {
       return undefined;
     }
-    const profile = resolveVectorFlightProfile(launchParams);
-    const computed = computeMultiStrikeTimings(origin, activeStrikeTargets, profile.speedKmh, profile.maxRangeKm);
+    const computed = computeMultiStrikeTimings(
+      origin,
+      activeStrikeTargets,
+      flightProfile.speedKmh,
+      flightProfile.maxRangeKm,
+      flightProfile.altitudeKm
+    );
     const inRangeDurations = computed.timings.filter((t) => t.inRange).map((t) => t.flightDurationMin);
     const minFlightMin = inRangeDurations.length > 0 ? Math.min(...inRangeDurations) : 0;
     const maxFlightMin = inRangeDurations.length > 0 ? Math.max(...inRangeDurations) : 0;
@@ -432,8 +518,9 @@ export default function App() {
       minFlightMin,
       maxFlightMin,
       impactedCount,
+      visualDurationMs: computed.visualDurationMs,
     };
-  }, [simulationMode, origin, activeStrikeTargets, launchParams, strikeBallisticStates]);
+  }, [simulationMode, origin, activeStrikeTargets, flightProfile, strikeBallisticStates]);
 
   const startLaunchSequence = () => {
     if (!target || activeStrikeTargets.length === 0) return;
@@ -453,13 +540,18 @@ export default function App() {
     }
 
     // Profil balistique canonique partagé entre la sidebar, la trajectoire 3D et le lancement
-    const profile = resolveVectorFlightProfile(launchParams);
-    const schedule = computeMultiStrikeTimings(origin, activeStrikeTargets, profile.speedKmh, profile.maxRangeKm);
+    const schedule = computeMultiStrikeTimings(
+      origin,
+      activeStrikeTargets,
+      flightProfile.speedKmh,
+      flightProfile.maxRangeKm,
+      flightProfile.altitudeKm
+    );
 
     if (schedule.inRangeCount === 0) {
       soundEngine.playAlert();
       const nearestDist = Math.min(...schedule.timings.map((t) => t.distanceKm));
-      setBallisticError(`Portée insuffisante : ${Math.round(nearestDist).toLocaleString('fr-FR')} km requis pour ${profile.maxRangeKm.toLocaleString('fr-FR')} km max.`);
+      setBallisticError(`Portée insuffisante : ${Math.round(nearestDist).toLocaleString('fr-FR')} km requis pour ${flightProfile.maxRangeKm.toLocaleString('fr-FR')} km max.`);
       setFlightProgress(0);
       setLaunchedTimings([]);
       setIsBallisticRunning(false);
@@ -468,7 +560,7 @@ export default function App() {
 
     if (schedule.inRangeCount < schedule.timings.length) {
       const skipped = schedule.timings.length - schedule.inRangeCount;
-      setBallisticError(`${skipped} cible(s) hors de portée max (${profile.maxRangeKm.toLocaleString('fr-FR')} km) exclue(s) du tir.`);
+      setBallisticError(`${skipped} cible(s) hors de portée max (${flightProfile.maxRangeKm.toLocaleString('fr-FR')} km) exclue(s) du tir.`);
     }
 
     // Mémorise la puissance et la nature eau/terre de chaque ogive pour le déclenchement sonore échelonné
@@ -476,7 +568,9 @@ export default function App() {
     activeStrikeTargets.forEach((s) => {
       audioMeta[s.id] = {
         effectiveYield: s.effectiveYield,
-        isWater: s.id === 'current-target' ? targetDetails.isWater : false,
+        isWater: s.id === 'current-target'
+          ? targetDetails.isWater
+          : !isCoordinateOnLand(s.target.lat, s.target.lng),
       };
     });
     strikeAudioMetaRef.current = audioMeta;
@@ -497,7 +591,16 @@ export default function App() {
     soundEngine.playMissileLaunch();
   };
   
-  const radii = useMemo(() => calculateBlastRadii(effectiveYield, environmentParams.explosionType, environmentParams.manningN), [effectiveYield, environmentParams.explosionType, environmentParams.manningN]);
+  const radii = useMemo(
+    () =>
+      calculateBlastRadii(
+        effectiveYield,
+        environmentParams.explosionType,
+        environmentParams.manningN,
+        ballisticCoupling?.craterMultiplier ?? 1
+      ),
+    [effectiveYield, environmentParams.explosionType, environmentParams.manningN, ballisticCoupling?.craterMultiplier]
+  );
 
   const tsunamiMetrics = useMemo(() => {
     return calculateTsunamiMetrics(
@@ -513,15 +616,84 @@ export default function App() {
   }, [effectiveYield, environmentParams, targetDetails.isWater]);
 
   const casualtyReport = useMemo(() => {
-    if (!target) return undefined;
-    return calculateCasualtyReport(
-      target.lat,
-      target.lng,
-      radii,
-      weapon.weaponType as any,
-      autoGeoData
-    );
-  }, [target, radii, weapon.weaponType, autoGeoData]);
+    if (!target && activeStrikeTargets.length === 0) return undefined;
+
+    const footprintInputs = activeStrikeTargets.map((strike) => {
+      const isCurrent = strike.id === 'current-target';
+      const strikeRadii = isCurrent
+        ? radii
+        : calculateBlastRadii(
+            strike.effectiveYield,
+            environmentParams.explosionType,
+            environmentParams.manningN,
+            ballisticCoupling?.craterMultiplier ?? 1
+          );
+      const strikeIsWater = isCurrent
+        ? targetDetails.isWater
+        : !isCoordinateOnLand(strike.target.lat, strike.target.lng);
+      const strikeShoreKm = isCurrent
+        ? (environmentParams.shoreDistanceKm ?? 5)
+        : estimateClosestSeaDistanceKm(strike.target.lat, strike.target.lng).distanceKm;
+
+      const strikeTsunami = environmentParams.maritimeImpact
+        ? (isCurrent
+            ? tsunamiMetrics
+            : calculateTsunamiMetrics(
+                strike.effectiveYield,
+                environmentParams.oceanDepthM ?? 2000,
+                strikeShoreKm,
+                environmentParams.beachSlopePct ?? 2.0,
+                environmentParams.terrainDamping ?? 1.5,
+                strikeIsWater,
+                environmentParams.coastalDepthM ?? 8,
+                environmentParams.manningN ?? 0.050
+              ))
+        : null;
+
+      return {
+        id: strike.id,
+        target: strike.target,
+        radii: strikeRadii,
+        effectiveYield: strike.effectiveYield,
+        weaponType: strike.weaponType,
+        tsunamiFloodRadiusM: strikeTsunami?.isEligible ? strikeTsunami.recommendedFloodRadiusM : 0,
+      };
+    });
+
+    const report = computeCombinedCasualtyReport({
+      strikes: footprintInputs,
+      defaultWeaponType: weapon.weaponType,
+      targetGeoData: autoGeoData,
+      worldDataset,
+    });
+
+    if (ballisticCoupling) {
+      return {
+        ...report,
+        kineticCoupling: {
+          kineticYieldKt: ballisticCoupling.kineticYieldKt,
+          reentryAngleDeg: ballisticCoupling.reentryAngleDeg,
+          plasmaIntensity: ballisticCoupling.plasmaIntensity,
+          impactVelocityMach: ballisticCoupling.impactVelocityMach,
+          craterMultiplier: ballisticCoupling.craterMultiplier,
+          seismicBoostMag: ballisticCoupling.seismicBoostMag,
+        },
+      };
+    }
+
+    return report;
+  }, [
+    target,
+    activeStrikeTargets,
+    radii,
+    environmentParams,
+    ballisticCoupling,
+    targetDetails.isWater,
+    tsunamiMetrics,
+    weapon.weaponType,
+    autoGeoData,
+    worldDataset,
+  ]);
 
   // Horloge unifiée de vol + détonations échelonnées en mode balistique
   useEffect(() => {
@@ -909,7 +1081,8 @@ export default function App() {
                   id: Math.random().toString(36).substring(7),
                   target: { ...target },
                   radii: { ...radii },
-                  effectiveYield: effectiveYield
+                  effectiveYield: effectiveYield,
+                  weaponType: weapon.weaponType,
                 }]);
               }
               setTarget({ lng, lat });
@@ -1046,7 +1219,7 @@ export default function App() {
               <div className="flex items-center gap-1.5 min-w-0">
                 <span className="w-2 h-2 rounded-full bg-red-500 shrink-0" />
                 <span className="text-[10px] font-bold text-red-400 tracking-wider uppercase truncate">
-                  {weapon.name} ({effectiveYield >= 1000 ? `${effectiveYield / 1000} Mt` : `${effectiveYield} kt`})
+                  {weapon.name} ({effectiveYield >= 1_000_000 ? `${(effectiveYield / 1_000_000).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} Gt` : effectiveYield >= 1000 ? `${(effectiveYield / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} Mt` : `${effectiveYield} kt`})
                 </span>
               </div>
               <span className="text-[10px] font-mono tabular-nums text-zinc-300 truncate">
@@ -1164,7 +1337,7 @@ export default function App() {
               <div className="flex flex-col">
                 <span className="text-sm font-bold text-red-500 tracking-wider">IMPACT CONFIRMÉ</span>
                 <span className="text-xs text-zinc-300 font-medium tabular-nums">
-                  {weapon.name} ({effectiveYield >= 1000 ? `${effectiveYield / 1000} Mt` : `${effectiveYield} kt`})
+                  {weapon.name} ({effectiveYield >= 1_000_000 ? `${(effectiveYield / 1_000_000).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} Gt` : effectiveYield >= 1000 ? `${(effectiveYield / 1000).toLocaleString('fr-FR', { maximumFractionDigits: 2 })} Mt` : `${effectiveYield} kt`})
                 </span>
               </div>
             </div>

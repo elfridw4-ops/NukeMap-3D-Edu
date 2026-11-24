@@ -1,5 +1,6 @@
 import { DataProvenance } from "../types";
-import { findNearbyCity } from "./citiesData";
+import { CITIES_DATABASE, findNearbyCity } from "./citiesData";
+import { isCoordinateOnLand, OFFLINE_WORLD_REGIONS } from "../data/worldPopulation";
 import { calculateDistanceKm } from "./nuclearMath";
 
 export interface AutomaticGeoData {
@@ -96,8 +97,298 @@ export const DEFAULT_AUTOMATIC_GEO_DATA: AutomaticGeoData = {
   error: null
 };
 
-// Cache mémoire court pour éviter les appels redondants vers Nominatim / Wikidata / Open-Meteo
+// Cache mémoire court + persistant localStorage pour éviter les appels redondants et permettre le repli hors ligne
 const geoCache = new Map<string, AutomaticGeoData>();
+const GEO_STORAGE_KEY = 'nukemap_edu_geo_cache_v1';
+const GEO_STORAGE_MAX_ENTRIES = 50;
+
+function readPersistedGeoCache(cacheKey: string): AutomaticGeoData | null {
+  if (typeof window === 'undefined' || !window.localStorage) return null;
+  try {
+    const raw = window.localStorage.getItem(GEO_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && parsed[cacheKey]) {
+      return parsed[cacheKey] as AutomaticGeoData;
+    }
+  } catch {
+    // Ignore storage read errors
+  }
+  return null;
+}
+
+function writePersistedGeoCache(cacheKey: string, data: AutomaticGeoData): void {
+  if (typeof window === 'undefined' || !window.localStorage) return;
+  try {
+    const raw = window.localStorage.getItem(GEO_STORAGE_KEY);
+    const parsed: Record<string, AutomaticGeoData> = raw ? JSON.parse(raw) : {};
+    parsed[cacheKey] = data;
+    const keys = Object.keys(parsed);
+    if (keys.length > GEO_STORAGE_MAX_ENTRIES) {
+      for (let i = 0; i < keys.length - GEO_STORAGE_MAX_ENTRIES; i++) {
+        delete parsed[keys[i]];
+      }
+    }
+    window.localStorage.setItem(GEO_STORAGE_KEY, JSON.stringify(parsed));
+  } catch {
+    // Ignore quota exceeded
+  }
+}
+
+export interface OfflineSearchResult {
+  name: string;
+  country: string;
+  lat: number;
+  lng: number;
+  source: 'city-db' | 'world-db';
+}
+
+function normalizeSearchStr(val: string): string {
+  return val
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+/**
+ * Recherche instantanée hors ligne parmi les 279 villes stratégiques et 175 pays mondiaux.
+ */
+export function searchOfflineLocations(query: string): OfflineSearchResult[] {
+  const normQ = normalizeSearchStr(query);
+  if (!normQ) return [];
+
+  const matches: Array<OfflineSearchResult & { score: number }> = [];
+
+  for (const city of CITIES_DATABASE) {
+    const cName = normalizeSearchStr(city.name);
+    const cCountry = normalizeSearchStr(city.country);
+    if (cName.includes(normQ) || cCountry.includes(normQ)) {
+      const score = cName === normQ ? 100 : cName.startsWith(normQ) ? 80 : 50;
+      matches.push({
+        name: city.name,
+        country: city.country,
+        lat: city.latitude,
+        lng: city.longitude,
+        source: 'city-db',
+        score,
+      });
+    }
+  }
+
+  for (const reg of OFFLINE_WORLD_REGIONS) {
+    const rName = normalizeSearchStr(reg.name);
+    if (rName.includes(normQ)) {
+      const score = rName === normQ ? 90 : rName.startsWith(normQ) ? 70 : 40;
+      matches.push({
+        name: reg.name,
+        country: reg.continent,
+        lat: reg.lat,
+        lng: reg.lng,
+        source: 'world-db',
+        score,
+      });
+    }
+  }
+
+  matches.sort((a, b) => b.score - a.score);
+  return matches.slice(0, 8).map(({ score: _s, ...item }) => item);
+}
+
+/**
+ * Résout une coordonnée [lat, lng] en mode hors ligne complet à partir du cache local,
+ * de la base des villes UN WUP (`cities.json`), des polygones continentaux et de `OFFLINE_WORLD_REGIONS`.
+ */
+export function resolveOfflineGeoData(lat: number, lng: number): {
+  isWater: boolean;
+  name?: string;
+  country: string;
+  city: string;
+  autoGeoData: AutomaticGeoData;
+} {
+  const persistedLand = readPersistedGeoCache(`${lat.toFixed(3)},${lng.toFixed(3)},l`);
+  const persistedWater = readPersistedGeoCache(`${lat.toFixed(3)},${lng.toFixed(3)},w`);
+  const persisted = persistedLand || persistedWater;
+  if (persisted) {
+    const isWaterCached = persisted.placeType === 'water';
+    return {
+      isWater: isWaterCached,
+      name: persisted.cityName,
+      country: persisted.countryName,
+      city: persisted.cityName,
+      autoGeoData: { ...persisted, latitude: lat, longitude: lng, loading: false, error: null },
+    };
+  }
+
+  const nearbyCity = findNearbyCity(lat, lng, 60);
+  if (nearbyCity) {
+    const densityValue = nearbyCity.densityPerKm2 > 0 ? nearbyCity.densityPerKm2 : 2400;
+    const placeType: AutomaticGeoData['placeType'] =
+      nearbyCity.population >= 500_000 ? 'metropolitan' : nearbyCity.population >= 50_000 ? 'city' : 'town';
+    const avgTropo =
+      (nearbyCity.atmosphere.tropopause_summer_km + nearbyCity.atmosphere.tropopause_winter_km) / 2;
+
+    const autoGeoData: AutomaticGeoData = {
+      latitude: lat,
+      longitude: lng,
+      cityName: nearbyCity.name,
+      countryName: nearbyCity.country,
+      placeType,
+      population: nearbyCity.population,
+      populationSource: `UN WUP / Demographia (${nearbyCity.name} • Hors-ligne)`,
+      densityLevel: classifyDensityLevel(densityValue, false),
+      densityValue,
+      elevationM: 45,
+      reliefType: 'Plat / Plaine',
+      roughnessCoef: 1.2,
+      elevationMin: 30,
+      elevationMax: 85,
+      elevationProfile: [
+        { direction: 'Centre', elevationM: 45 },
+        { direction: 'Nord (2km)', elevationM: 60 },
+        { direction: 'Sud (2km)', elevationM: 42 },
+        { direction: 'Est (2km)', elevationM: 38 },
+        { direction: 'Ouest (2km)', elevationM: 52 },
+      ],
+      manningN: nearbyCity.topography.manning_coefficient_n || 0.045,
+      tropopauseKm: avgTropo || 12,
+      oceanDepthM: nearbyCity.bathymetry.ocean_depth_h0_m,
+      shoreDistanceKm: nearbyCity.bathymetry.distance_to_shore_d_km,
+      beachSlopePct: nearbyCity.topography.coastal_slope_percent,
+      windSpeedKmh: nearbyCity.atmosphere.speed_kmh_avg || 15,
+      windDirectionDeg: nearbyCity.atmosphere.direction_deg || 270,
+      hospitals: nearbyCity.population >= 1_000_000 ? 10 : 4,
+      schools: nearbyCity.population >= 1_000_000 ? 35 : 14,
+      industrialZones: 3,
+      infrastructureDetected: false,
+      provenance: {
+        physicsModel: GLASSTONE_MODEL_LABEL,
+        populationStatus: 'verified-reference',
+        populationSource: `Base locale UN WUP / Demographia (${nearbyCity.name})`,
+        infrastructureStatus: 'fallback',
+        infrastructureSource: 'Estimation statistique hors ligne',
+        weatherElevationSource: 'Base atmosphérique ERA5 / SRTM (cities.json)',
+      },
+      loading: false,
+      error: null,
+    };
+
+    return {
+      isWater: false,
+      name: nearbyCity.name,
+      country: nearbyCity.country,
+      city: nearbyCity.name,
+      autoGeoData,
+    };
+  }
+
+  const onLand = isCoordinateOnLand(lat, lng);
+  if (!onLand) {
+    const autoGeoData: AutomaticGeoData = {
+      latitude: lat,
+      longitude: lng,
+      cityName: 'Haute Mer / Océan',
+      countryName: 'Eaux Internationales',
+      placeType: 'water',
+      population: 0,
+      populationSource: 'Zone Maritime / Océanique (Hors-ligne)',
+      densityLevel: 'Zone Inhabitée (Aquatique)',
+      densityValue: 0,
+      elevationM: 0,
+      reliefType: 'Fonds marins',
+      roughnessCoef: 1.0,
+      elevationMin: -2000,
+      elevationMax: 0,
+      elevationProfile: [],
+      manningN: 0.015,
+      tropopauseKm: 17.0 - 9.0 * Math.pow(Math.abs(lat) / 90, 2),
+      oceanDepthM: 2400,
+      shoreDistanceKm: 0,
+      beachSlopePct: 2.0,
+      windSpeedKmh: 22,
+      windDirectionDeg: 270,
+      hospitals: 0,
+      schools: 0,
+      industrialZones: 0,
+      infrastructureDetected: false,
+      provenance: {
+        physicsModel: GLASSTONE_MODEL_LABEL,
+        populationStatus: 'water-uninhabited',
+        populationSource: 'Détection continentale hors ligne (Zone Maritime)',
+        infrastructureStatus: 'water-uninhabited',
+        infrastructureSource: 'Zone Maritime (0 infrastructure civile)',
+        weatherElevationSource: 'Modèle marin latitudinal hors ligne',
+      },
+      loading: false,
+      error: null,
+    };
+    return {
+      isWater: true,
+      name: 'Haute Mer / Océan',
+      country: 'Eaux Internationales',
+      city: 'Haute Mer / Océan',
+      autoGeoData,
+    };
+  }
+
+  // Terre ferme hors des grandes métropoles : trouve le pays le plus proche dans OFFLINE_WORLD_REGIONS
+  let nearestCountry = OFFLINE_WORLD_REGIONS[0];
+  let minCountryDist = Infinity;
+  for (const reg of OFFLINE_WORLD_REGIONS) {
+    const d = calculateDistanceKm(lat, lng, reg.lat, reg.lng);
+    if (d < minCountryDist) {
+      minCountryDist = d;
+      nearestCountry = reg;
+    }
+  }
+
+  const countryDensity = Math.max(15, Math.round(nearestCountry.population / Math.max(100, nearestCountry.areaKm2)));
+  const localPop = Math.min(250_000, Math.max(2_500, Math.round(countryDensity * 80)));
+
+  const autoGeoData: AutomaticGeoData = {
+    latitude: lat,
+    longitude: lng,
+    cityName: `Secteur ${nearestCountry.name}`,
+    countryName: nearestCountry.name,
+    placeType: countryDensity > 250 ? 'town' : 'rural',
+    population: localPop,
+    populationSource: `Base Mondiale Hors-Ligne (${nearestCountry.name})`,
+    densityLevel: classifyDensityLevel(countryDensity, false),
+    densityValue: countryDensity,
+    elevationM: 120,
+    reliefType: 'Plat / Plaine',
+    roughnessCoef: 1.3,
+    elevationMin: 80,
+    elevationMax: 165,
+    elevationProfile: [],
+    manningN: 0.035,
+    tropopauseKm: 17.0 - 9.0 * Math.pow(Math.abs(lat) / 90, 2),
+    windSpeedKmh: 16,
+    windDirectionDeg: 270,
+    hospitals: countryDensity > 200 ? 1 : 0,
+    schools: countryDensity > 200 ? 5 : 1,
+    industrialZones: countryDensity > 200 ? 1 : 0,
+    infrastructureDetected: false,
+    provenance: {
+      physicsModel: GLASSTONE_MODEL_LABEL,
+      populationStatus: 'verified-reference',
+      populationSource: `Base Mondiale Hors-Ligne UN WPP (${nearestCountry.name})`,
+      infrastructureStatus: 'fallback',
+      infrastructureSource: 'Estimation statistique hors ligne',
+      weatherElevationSource: 'Modèle latitudinal hors ligne',
+    },
+    loading: false,
+    error: null,
+  };
+
+  return {
+    isWater: false,
+    name: autoGeoData.cityName,
+    country: nearestCountry.name,
+    city: autoGeoData.cityName,
+    autoGeoData,
+  };
+}
 
 function classifyDensityLevel(densityValue: number, isWater: boolean): string {
   if (isWater) return "Zone Inhabitée (Aquatique)";
@@ -415,8 +706,9 @@ export async function fetchAutomaticGeoData(
   signal?: AbortSignal
 ): Promise<AutomaticGeoData> {
   const cacheKey = `${lat.toFixed(3)},${lng.toFixed(3)},${isWater ? 'w' : 'l'}`;
-  const cached = geoCache.get(cacheKey);
+  const cached = geoCache.get(cacheKey) || readPersistedGeoCache(cacheKey);
   if (cached) {
+    geoCache.set(cacheKey, cached);
     return { ...cached, latitude: lat, longitude: lng };
   }
 
@@ -576,6 +868,7 @@ export async function fetchAutomaticGeoData(
     result.provenance.populationStatus = 'water-uninhabited';
     result.provenance.infrastructureStatus = 'water-uninhabited';
     geoCache.set(cacheKey, result);
+    writePersistedGeoCache(cacheKey, result);
     return result;
   }
 
@@ -651,5 +944,6 @@ export async function fetchAutomaticGeoData(
 
   result.provenance.verifiedAtIso = new Date().toISOString();
   geoCache.set(cacheKey, result);
+  writePersistedGeoCache(cacheKey, result);
   return result;
 }

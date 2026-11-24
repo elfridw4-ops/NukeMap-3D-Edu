@@ -64,6 +64,7 @@ export interface PastStrike {
     target: { lng: number; lat: number };
     radii: BlastRadii;
     effectiveYield: number;
+    weaponType?: 'fission' | 'fusion' | 'dirty';
 }
 
 export interface BlastRadii {
@@ -107,6 +108,15 @@ export interface DataProvenance {
     verifiedAtIso?: string;
 }
 
+export interface KineticImpactSummary {
+    kineticYieldKt: number;
+    reentryAngleDeg: number;
+    plasmaIntensity: number; // 0..1
+    impactVelocityMach: number;
+    craterMultiplier: number;
+    seismicBoostMag: number;
+}
+
 export interface CasualtyReport {
     populationTotal: number;
     populationDensity: number; // inhab / km2
@@ -118,6 +128,14 @@ export interface CasualtyReport {
     schoolsAffected: number;
     airportsAffected: number;
     roadsAffected: number;
+    affectedCitiesCount?: number;
+    affectedCountriesCount?: number;
+    affectedContinents?: string[];
+    topAffectedCities?: string[];
+    impactScale?: 'Locale' | 'Régionale' | 'Continentale' | 'Multi-Continentale' | 'Planétaire';
+    isMultiStrike?: boolean;
+    strikeCount?: number;
+    kineticCoupling?: KineticImpactSummary;
     dataProvenance?: DataProvenance;
 }
 
@@ -137,8 +155,10 @@ export interface CasualtyDistancePoint {
 export interface StrikeBallisticStatus {
     id: string;
     distanceKm: number;
+    arcDistanceKm?: number;
     flightDurationMin: number;
     impactAtMs: number;
+    visualDurationMs?: number;
     inRange: boolean;
     progress: number;
     detonationTimeMs: number | null;

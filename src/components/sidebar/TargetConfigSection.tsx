@@ -1,9 +1,22 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { LaunchParams, EnvironmentParams, BlastRadii, WeaponConfig, DeliveryType } from '../../types';
-import { WEAPON_PRESETS, haversineKm, flightTimeMin, resolveVectorFlightProfile } from '../../lib/nuclearMath';
+import {
+  WEAPON_PRESETS,
+  haversineKm,
+  flightTimeMin,
+  resolveVectorFlightProfile,
+  SIMULATION_CEILINGS,
+  clampSpeedKmh,
+  clampApogeeKm,
+  clampRangeKm,
+  computeBallisticArcLengthKm,
+  computeBallisticImpactCoupling,
+  computeMultiStrikeTimings,
+  calculateRichterScale,
+} from '../../lib/nuclearMath';
 import { CITIES_DATABASE, findNearbyCity } from '../../lib/citiesData';
-import { AutomaticGeoData } from '../../lib/geoDataFetcher';
+import { AutomaticGeoData, searchOfflineLocations, OfflineSearchResult } from '../../lib/geoDataFetcher';
 import { VECTORS } from './constants';
 import {
   Navigation, Crosshair, MapPin, Rocket, Search, Sparkles, ChevronUp, ChevronDown,
@@ -49,6 +62,7 @@ export interface TargetConfigSectionProps {
     minFlightMin: number;
     maxFlightMin: number;
     impactedCount: number;
+    visualDurationMs?: number;
   };
 }
 
@@ -82,6 +96,8 @@ export function TargetConfigSection({
   const [searchQuery, setSearchQuery] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [offlineMatches, setOfflineMatches] = useState<OfflineSearchResult[]>([]);
+  const [paramCeilingNotice, setParamCeilingNotice] = useState<string | null>(null);
   const [isTargetAnalysisExpanded, setIsTargetAnalysisExpanded] = useState(false);
 
   const nearbyCity = target ? findNearbyCity(target.lat, target.lng, 25) : null;
@@ -96,9 +112,30 @@ export function TargetConfigSection({
     : sidebarDistanceKm > flightProfile.maxRangeKm;
 
   const handleSearch = async () => {
-    if (!searchQuery) return;
+    if (!searchQuery.trim()) return;
     setIsSearching(true);
     setSearchError(null);
+    setOfflineMatches([]);
+
+    const runOfflineFallback = () => {
+      const localMatches = searchOfflineLocations(searchQuery);
+      if (localMatches.length > 0) {
+        onSearch(localMatches[0].lng, localMatches[0].lat);
+        setOfflineMatches(localMatches.length > 1 ? localMatches.slice(0, 5) : []);
+        setSearchQuery('');
+        return true;
+      }
+      return false;
+    };
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      if (!runOfflineFallback()) {
+        setSearchError("Lieu introuvable dans la base hors ligne");
+      }
+      setIsSearching(false);
+      return;
+    }
+
     try {
       const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(searchQuery)}&format=json&limit=1`, {
         headers: {
@@ -114,12 +151,14 @@ export function TargetConfigSection({
         const lng = parseFloat(data[0].lon);
         onSearch(lng, lat);
         setSearchQuery('');
-      } else {
+      } else if (!runOfflineFallback()) {
         setSearchError("Lieu introuvable");
       }
     } catch(e) {
-      console.error("Geocoding failed:", e);
-      setSearchError("Recherche indisponible (CORS/Régulation)");
+      console.warn("Online geocoding unavailable, switching to offline DB:", e);
+      if (!runOfflineFallback()) {
+        setSearchError("Lieu introuvable hors ligne (villes/pays disponibles)");
+      }
     } finally {
       setIsSearching(false);
     }
@@ -292,6 +331,25 @@ export function TargetConfigSection({
                   const activeRange = flightProfile.maxRangeKm;
                   const activeSpeed = flightProfile.speedKmh;
                   const activeAltitudeKm = flightProfile.altitudeKm;
+                  const arcDistanceKm = distanceKm > 0 ? computeBallisticArcLengthKm(distanceKm, activeAltitudeKm) : 0;
+
+                  const singleTiming = origin && target
+                    ? computeMultiStrikeTimings(origin, [{ id: 'preview', target }], activeSpeed, activeRange, activeAltitudeKm)
+                    : null;
+                  const animDurationSec = isMultiSalvo && multiStrikeFlightSummary?.visualDurationMs
+                    ? (multiStrikeFlightSummary.visualDurationMs / 1000)
+                    : (singleTiming ? singleTiming.visualDurationMs / 1000 : 0);
+
+                  const kineticPreview = origin && target
+                    ? computeBallisticImpactCoupling({
+                        baseYieldKt: 500,
+                        speedKmh: activeSpeed,
+                        apogeeKm: activeAltitudeKm,
+                        vectorId: flightProfile.vectorId,
+                        explosionType: environmentParams.explosionType,
+                        surfaceDistKm: distanceKm,
+                      })
+                    : null;
 
                   const isOutOfRange = isMultiSalvo
                     ? multiStrikeFlightSummary.inRangeCount === 0
@@ -301,7 +359,7 @@ export function TargetConfigSection({
                     && multiStrikeFlightSummary.inRangeCount < multiStrikeFlightSummary.totalCount;
                   const flightDurationMin = isMultiSalvo
                     ? multiStrikeFlightSummary.maxFlightMin
-                    : (distanceKm > 0 ? flightTimeMin(distanceKm, activeSpeed) : 0);
+                    : (arcDistanceKm > 0 ? flightTimeMin(arcDistanceKm, activeSpeed) : 0);
 
                   const formatDuration = (totalMins: number) => {
                     if (totalMins <= 0) return "0 min 00 sec";
@@ -352,12 +410,18 @@ export function TargetConfigSection({
                             <input 
                               id="vector-speed-input"
                               type="number" 
-                              min="100"
-                              max="150000"
+                              min={SIMULATION_CEILINGS.MIN_SPEED_KMH}
+                              max={SIMULATION_CEILINGS.MAX_SPEED_KMH}
                               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 font-mono tabular-nums text-[11px] text-zinc-200 outline-none focus:ring-1 focus:ring-red-500 shadow-inner"
                               value={launchParams.customSpeedKmh !== undefined ? launchParams.customSpeedKmh : (selectedVec.speedKmh || 24000)}
                               onChange={(e) => {
-                                const val = parseInt(e.target.value, 10) || 100;
+                                const raw = parseInt(e.target.value, 10);
+                                const val = Number.isFinite(raw) ? clampSpeedKmh(raw) : SIMULATION_CEILINGS.MIN_SPEED_KMH;
+                                setParamCeilingNotice(
+                                  Number.isFinite(raw) && raw > SIMULATION_CEILINGS.MAX_SPEED_KMH
+                                    ? `Vitesse plafonnée à ${SIMULATION_CEILINGS.MAX_SPEED_KMH.toLocaleString('fr-FR')} km/h`
+                                    : null
+                                );
                                 setLaunchParams({
                                   ...launchParams,
                                   customSpeedKmh: val,
@@ -373,14 +437,21 @@ export function TargetConfigSection({
                             <input 
                               id="vector-apogee-input"
                               type="number" 
-                              min="0"
-                              max="5000"
+                              min={SIMULATION_CEILINGS.MIN_APOGEE_KM}
+                              max={SIMULATION_CEILINGS.MAX_APOGEE_KM}
                               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 font-mono tabular-nums text-[11px] text-zinc-200 outline-none focus:ring-1 focus:ring-red-500 shadow-inner"
                               value={launchParams.altitudeKm !== undefined ? launchParams.altitudeKm : (selectedVec.altitudeKm || 1200)}
                               onChange={(e) => {
+                                const raw = parseInt(e.target.value, 10);
+                                const val = Number.isFinite(raw) ? clampApogeeKm(raw) : 0;
+                                setParamCeilingNotice(
+                                  Number.isFinite(raw) && raw > SIMULATION_CEILINGS.MAX_APOGEE_KM
+                                    ? `Apogée plafonné à ${SIMULATION_CEILINGS.MAX_APOGEE_KM.toLocaleString('fr-FR')} km`
+                                    : null
+                                );
                                 setLaunchParams({
                                   ...launchParams,
-                                  altitudeKm: parseInt(e.target.value, 10) || 0
+                                  altitudeKm: val
                                 });
                               }}
                               placeholder="Ex: 1200"
@@ -394,14 +465,21 @@ export function TargetConfigSection({
                             <input 
                               id="vector-range-input"
                               type="number" 
-                              min="10"
-                              max="150000"
+                              min={SIMULATION_CEILINGS.MIN_RANGE_KM}
+                              max={SIMULATION_CEILINGS.MAX_RANGE_KM}
                               className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2 font-mono tabular-nums text-[11px] text-zinc-200 outline-none focus:ring-1 focus:ring-red-500 shadow-inner"
                               value={launchParams.customRangeKm !== undefined ? launchParams.customRangeKm : selectedVec.rangeKm}
                               onChange={(e) => {
+                                const raw = parseInt(e.target.value, 10);
+                                const val = Number.isFinite(raw) ? clampRangeKm(raw) : SIMULATION_CEILINGS.MIN_RANGE_KM;
+                                setParamCeilingNotice(
+                                  Number.isFinite(raw) && raw > SIMULATION_CEILINGS.MAX_RANGE_KM
+                                    ? `Portée plafonnée à ${SIMULATION_CEILINGS.MAX_RANGE_KM.toLocaleString('fr-FR')} km`
+                                    : null
+                                );
                                 setLaunchParams({
                                   ...launchParams,
-                                  customRangeKm: parseInt(e.target.value, 10) || 10
+                                  customRangeKm: val
                                 });
                               }}
                               placeholder="Ex: 13000"
@@ -427,7 +505,7 @@ export function TargetConfigSection({
                                 setLaunchParams({
                                   ...launchParams,
                                   trajectoryType: type,
-                                  altitudeKm: alt
+                                  altitudeKm: clampApogeeKm(alt)
                                 });
                               }}
                             >
@@ -437,6 +515,12 @@ export function TargetConfigSection({
                             </select>
                           </div>
                         </div>
+
+                        {paramCeilingNotice && (
+                          <div className="text-[9.5px] font-mono text-amber-300 bg-amber-950/30 border border-amber-800/50 rounded px-2 py-1">
+                            ⚠️ {paramCeilingNotice}
+                          </div>
+                        )}
                       </div>
 
                       {/* Calculation card */}
@@ -446,8 +530,12 @@ export function TargetConfigSection({
                           <span className="uppercase text-[9px] font-bold tracking-wider">État</span>
                         </div>
                         <div className="flex justify-between items-center">
-                          <span className="text-zinc-400">Distance :</span>
-                          <span className="text-zinc-200 font-semibold">{distanceKm > 0 ? `${Math.round(distanceKm).toLocaleString('fr-FR')} km` : "N/A"}</span>
+                          <span className="text-zinc-400">Distance / Arc 3D :</span>
+                          <span className="text-zinc-200 font-semibold">
+                            {distanceKm > 0
+                              ? `${Math.round(distanceKm).toLocaleString('fr-FR')} / ${Math.round(arcDistanceKm).toLocaleString('fr-FR')} km`
+                              : "N/A"}
+                          </span>
                         </div>
                         <div className="flex justify-between items-center">
                           <span className="text-zinc-400">{isMultiSalvo ? "Fenêtre de tir :" : "Temps de vol :"}</span>
@@ -459,6 +547,28 @@ export function TargetConfigSection({
                               : (distanceKm > 0 ? formatDuration(flightDurationMin) : "N/A")}
                           </span>
                         </div>
+                        {origin && target && animDurationSec > 0 && (
+                          <div className="flex justify-between items-center">
+                            <span className="text-zinc-400">Animation vol :</span>
+                            <span className="text-cyan-400 font-semibold">{animDurationSec.toFixed(1)} s (vitesse/apogée)</span>
+                          </div>
+                        )}
+                        {kineticPreview && (
+                          <div className="pt-1.5 border-t border-zinc-800/60 space-y-1 text-[10px]">
+                            <div className="flex justify-between items-center">
+                              <span className="text-zinc-400">Rentrée / Plasma :</span>
+                              <span className="text-orange-400 font-semibold">
+                                Mach {kineticPreview.impactVelocityMach.toFixed(1)} • {kineticPreview.reentryAngleDeg}°
+                              </span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-zinc-400">Énergie cinétique :</span>
+                              <span className="text-amber-300 font-semibold">
+                                +{kineticPreview.kineticYieldKt < 1 ? kineticPreview.kineticYieldKt.toFixed(3) : kineticPreview.kineticYieldKt.toFixed(1)} kt • Séisme ~Mw {calculateRichterScale(500 + kineticPreview.kineticYieldKt, kineticPreview.seismicBoostMag)}
+                              </span>
+                            </div>
+                          </div>
+                        )}
                         {isMultiSalvo && origin && (
                           <div className="flex justify-between items-center">
                             <span className="text-zinc-400">Salve multi-cibles :</span>
@@ -705,6 +815,27 @@ export function TargetConfigSection({
           {searchError && (
             <div role="alert" className="text-[10px] text-red-400 font-mono flex items-center gap-1 mt-0.5 pl-1">
               <span>⚠️</span> {searchError}
+            </div>
+          )}
+          {offlineMatches.length > 0 && (
+            <div className="bg-zinc-950/90 border border-zinc-800 rounded-lg p-1.5 space-y-1">
+              <div className="text-[9px] font-mono uppercase text-zinc-400 px-1">
+                Correspondances hors ligne :
+              </div>
+              {offlineMatches.map((m, idx) => (
+                <button
+                  key={`${m.name}-${idx}`}
+                  type="button"
+                  onClick={() => {
+                    onSearch(m.lng, m.lat);
+                    setOfflineMatches([]);
+                  }}
+                  className="w-full text-left px-2 py-1 rounded text-[10.5px] text-zinc-200 hover:bg-zinc-800/80 flex items-center justify-between gap-2 cursor-pointer"
+                >
+                  <span className="truncate font-medium">{m.name}</span>
+                  <span className="text-[9px] font-mono text-zinc-400 shrink-0">{m.country}</span>
+                </button>
+              ))}
             </div>
           )}
         </div>
