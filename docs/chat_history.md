@@ -87,7 +87,7 @@ Utilisateur :
 APPROUVÉ VAS Y
 
 Assistant :
-J'ai conçu et intégré une Landing Page professionnelle complète (`/src/components/LandingPage.tsx`) modélisant les aspects d'onboarding, de cas pratiques réels et de FAQ scientifiques avec une esthétique Brutaliste de type Bunker Chic cohérente. J'ai configuré un système de routage à double flux préservant l'état du simulateur cartographique Deck.gl. J'ai ensuite créé le fichier de stratégie SEO technique et sémantique (`/seo.md`) ainsi que la charte graphique et guide d'identité visuelle complet (`/charte_graphique.md`). Toutes les spécifications ont été reportées dans l'historique du projet et le registre des tâches. L'ensemble compile à 100% avec succès sans aucune erreur TS/Vite.
+J'ai conçu et intégré une Landing Page professionnelle complète (`/src/components/LandingPage.tsx`) modélisant les aspects d'onboarding, de cas pratiques réels et de FAQ scientifiques avec une esthétique Brutaliste de type Bunker Chic cohérente. J'ai configuré un système de routage à double flux préservant l'état du simulateur cartographique Deck.gl. J'ai ensuite créé le fichier de stratégie SEO technique et sémantique ([`seo.md`](./seo.md)) ainsi que la charte graphique et guide d'identité visuelle complet ([`charte_graphique.md`](./charte_graphique.md)). Toutes les spécifications ont été reportées dans l'historique du projet et le registre des tâches. L'ensemble compile à 100% avec succès sans aucune erreur TS/Vite.
 
 # Historique des Échanges (Chat History) - NUKEMAP EDU
 

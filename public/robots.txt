@@ -54,4 +54,4 @@ Allow: /
 User-agent: Applebot-Extended
 Allow: /
 
-Sitemap: https://ais-pre-fzvmzxocs5ijp3lhdhfanl-156867150624.europe-west1.run.app/sitemap.xml
+Sitemap: https://nukemap-3d.vercel.app/sitemap.xml

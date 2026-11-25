@@ -98,7 +98,7 @@ Le projet est développé sur une base d'application moderne réactive Single Pa
     * Conception d'un portail de présentation élégant détaillant le problème physique résolu, la proposition de valeur éducative, les bénéfices, la FAQ technique, et des cas concrets d'utilisation.
     * Implémentation du routeur réactif interne sous `App.tsx` via l'état `currentTab`, découplant l'onboarding de la simulation cartographique lourde Deck.gl pour un premier chargement instantané sans perte d'état.
     * Ajout de boutons d'action d'immersion et de repli tactique (`[ Portail Présentation ]`) pour naviguer librement.
-    * Rédaction des règles SEO complètes (`/seo.md`) et de la charte de Style "Bunker Chic / Brutalisme" (`/charte_graphique.md`).
+    * Rédaction des règles SEO complètes ([`seo.md`](./seo.md)) et de la charte de Style "Bunker Chic / Brutalisme" ([`charte_graphique.md`](./charte_graphique.md)).
   * **Impact** : La console de commande devient un produit fini, accessible et séduisant pour une double audience : de l'étudiant curieux à l'analyste de défense passive confirmé.
 
 * **2026-11-20 — Audit Global & Correctifs Cartographie, Mobile, Physique et PWA**
